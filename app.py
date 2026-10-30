@@ -218,9 +218,9 @@ with tab1:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 2. TABELA ÚNICA MENSALIZADA DO PB DOS FORNECEDORES
+    # 2. CUSTO PB (TABELA TRAVADA DE CUSTO ORÇADO)
     # -------------------------------------------------------------
-    st.header("2. Valores Mensais do PB dos Fornecedores (Plano Básico)")
+    st.header("2. Custo PB")
     st.caption("🔒 *Tabela travada que alimenta o PB de forma imutável. Tarifas em R$/t e Custos Fixos em R$ mensal.*")
 
     for _, f_row in st.session_state.fornecedores.iterrows():
@@ -238,7 +238,6 @@ with tab1:
     for _, f_row in st.session_state.fornecedores.iterrows():
         tipo_fornec_map[str(f_row["Fornecedor"]).strip()] = str(f_row.get("Tipo", "Tarifa (R$/t)"))
 
-    # Formatação com cores de meses passados (verde) e vigente (azul)
     def formatar_tabela_pb_fornec(df):
         formatted_df = pd.DataFrame(index=df.index, columns=df.columns, dtype=object)
         for r in df.index:
@@ -256,23 +255,23 @@ with tab1:
         use_container_width=True
     )
 
-    with st.expander("🔒 Desbloquear Edição do PB dos Fornecedores (Senha: mudar123)", expanded=False):
+    with st.expander("🔒 Desbloquear Edição do Custo PB (Senha: mudar123)", expanded=False):
         if not st.session_state.pb_fornec_desbloqueado:
             col_p_forn, col_b_forn = st.columns([3, 1])
             with col_p_forn:
-                senha_forn = st.text_input("Senha para alterar o PB dos Fornecedores:", type="password", key="pwd_pb_fornec")
+                senha_forn = st.text_input("Senha para alterar o Custo PB:", type="password", key="pwd_pb_fornec")
             with col_b_forn:
                 st.write("")
                 st.write("")
-                if st.button("Destravar PB Fornecedores"):
+                if st.button("Destravar Custo PB"):
                     if senha_forn == "mudar123":
                         st.session_state.pb_fornec_desbloqueado = True
-                        st.success("PB dos Fornecedores destravado!")
+                        st.success("Custo PB destravado!")
                         st.rerun()
                     else:
                         st.error("Senha incorreta!")
         else:
-            st.warning("⚠️ Edição do PB dos Fornecedores Habilitada")
+            st.warning("⚠️ Edição do Custo PB Habilitada")
             edit_pb_fornec = st.data_editor(
                 df_pb_fornec_exib.astype(float),
                 use_container_width=True,
@@ -280,15 +279,15 @@ with tab1:
             )
             col_bf1, col_bf2 = st.columns(2)
             with col_bf1:
-                if st.button("💾 Salvar e Travar Novo PB dos Fornecedores", type="primary"):
+                if st.button("💾 Salvar e Travar Novo Custo PB", type="primary"):
                     for r in edit_pb_fornec.index:
                         st.session_state.pb_fornecedores[r] = [float(x) for x in edit_pb_fornec.loc[r].values]
                     salvar_json(FILE_PB_FORNECEDORES, st.session_state.pb_fornecedores)
                     st.session_state.pb_fornec_desbloqueado = False
-                    st.success("Novo PB dos Fornecedores salvo e travado!")
+                    st.success("Novo Custo PB salvo e travado!")
                     st.rerun()
             with col_bf2:
-                if st.button("Cancelar PB Fornecedores"):
+                if st.button("Cancelar Custo PB"):
                     st.session_state.pb_fornec_desbloqueado = False
                     st.rerun()
 
@@ -322,10 +321,10 @@ with tab1:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 4. CADASTRO DE FORNECEDORES & PARAMÉTRICAS (REAL+RF)
+    # 4. SIMULADOR RF
     # -------------------------------------------------------------
-    st.header("4. Cadastro de Fornecedores & Paramétricas (Real+RF)")
-    st.caption("ℹ️ Esta tabela é exclusiva para **projetar custos para frente** (do mês vigente em diante). Ela não altera o PB e não apaga os meses passados.")
+    st.header("4. Simulador RF")
+    st.caption("ℹ️ Defina o novo valor base e o mês em que ele entra em vigor. No mês de início, o valor assume exatamente o Valor Base (sem multiplicar por custos). Os reajustes paramétricos incidem nos meses seguintes.")
     
     if "Mes_Inicio" not in st.session_state.fornecedores.columns:
         st.session_state.fornecedores["Mes_Inicio"] = 1
@@ -346,10 +345,10 @@ with tab1:
         key="editor_fornecedores_table"
     )
 
-    if st.button("💾 Salvar Cadastro de Fornecedores", type="primary"):
+    if st.button("💾 Salvar Simulador RF", type="primary"):
         st.session_state.fornecedores = edit_fornec
         salvar_json(FILE_FORNECEDORES, edit_fornec.to_dict(orient="records"))
-        st.success("Paramétricas de projeção salvas!")
+        st.success("Parâmetros do Simulador RF salvos!")
         st.rerun()
 
 
@@ -368,7 +367,7 @@ igpm_taxa = df_ind["IGPM_%"].values / 100.0
 montante_pb = {}
 unitario_pb = {}
 
-# 1. PB 100% BLINDADO: Puxa ESTRITAMENTE da Tabela 2 da Aba 1 (pb_fornecedores)
+# 1. PB 100% BLINDADO: Puxa ESTRITAMENTE da Tabela 2 Custo PB
 for f_nome, vals_pb in st.session_state.pb_fornecedores.items():
     f_nome_str = str(f_nome).strip()
     tipo_f = tipo_fornec_map.get(f_nome_str, "Tarifa (R$/t)")
@@ -381,7 +380,7 @@ for f_nome, vals_pb in st.session_state.pb_fornecedores.items():
         montante_pb[f_nome_str] = vals_arr
         unitario_pb[f_nome_str] = np.where(vol_pb_arr > 0, vals_arr / vol_pb_arr, 0.0)
 
-# 2. PROJEÇÃO REAL+RF BASE (Paramétrica para frente, sem zerar passado)
+# 2. PROJEÇÃO REAL+RF BASE DO SIMULADOR RF
 proj_tarifa_rf = {}
 proj_fixo_rf = {}
 
@@ -409,13 +408,12 @@ for _, row in st.session_state.fornecedores.iterrows():
     elif idx_aniv == "IGPM":
         taxa_aniv = np.sum(igpm_taxa)
 
-    # Valores históricos herdados do PB daquele fornecedor
     hist_pb_forn = st.session_state.pb_fornecedores.get(nome, [base] * 12)
     curva_u = np.zeros(12)
     curva_m = np.zeros(12)
 
-    # Meses passados (< mes_vigente_idx): NÃO ZERAM, mantêm o histórico do PB se o fornecedor já existia
-    for m in range(mes_vigente_idx):
+    # 1. Meses anteriores a m_inicio: preservam o histórico/PB sem zerar
+    for m in range(m_inicio):
         if nome in st.session_state.pb_fornecedores:
             val_p = float(hist_pb_forn[m])
             if "Tarifa" in tipo:
@@ -425,25 +423,20 @@ for _, row in st.session_state.fornecedores.iterrows():
                 curva_m[m] = val_p
                 curva_u[m] = val_p / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
         else:
-            # Fornecedor novo só conta a partir do m_inicio
-            if m >= m_inicio:
-                if "Tarifa" in tipo:
-                    curva_u[m] = base
-                    curva_m[m] = base * vol_real_rf_arr[m]
-                else:
-                    curva_m[m] = base
-                    curva_u[m] = base / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+            curva_u[m] = 0.0
+            curva_m[m] = 0.0
 
-    # Mês vigente: assume o novo Valor_Base
-    if "Tarifa" in tipo:
-        curva_u[mes_vigente_idx] = base
-        curva_m[mes_vigente_idx] = base * vol_real_rf_arr[mes_vigente_idx]
-    else:
-        curva_m[mes_vigente_idx] = base
-        curva_u[mes_vigente_idx] = base / vol_real_rf_arr[mes_vigente_idx] if vol_real_rf_arr[mes_vigente_idx] > 0 else 0.0
+    # 2. No mês m_inicio: assume EXATAMENTE o Valor Base (já é o previsto, sem multiplicar por custos)
+    if m_inicio < 12:
+        if "Tarifa" in tipo:
+            curva_u[m_inicio] = base
+            curva_m[m_inicio] = base * vol_real_rf_arr[m_inicio]
+        else:
+            curva_m[m_inicio] = base
+            curva_u[m_inicio] = base / vol_real_rf_arr[m_inicio] if vol_real_rf_arr[m_inicio] > 0 else 0.0
 
-    # Meses posteriores encadeados com diesel e aniversário
-    for m in range(mes_vigente_idx + 1, 12):
+    # 3. Meses seguintes (m > m_inicio): incidem os reajustes paramétricos encadeados
+    for m in range(m_inicio + 1, 12):
         var_mensal = (1.0 + diesel_taxa[m]) if gatilho == "Diesel" else 1.0
         var_aniv = (1.0 + taxa_aniv) if m == m_aniv else 1.0
         
@@ -484,9 +477,8 @@ with tab2:
     # EDITOR CUSTOMIZADO DE REAL+RF (TARIFA vs FIXO)
     # -------------------------------------------------------------
     with st.expander("✏️ Ajustar Valores de Real+RF (Tarifas em R$/t e Fixos em R$)", expanded=False):
-        st.write("Ajuste os valores reais já apurados ou projeções específicas. O sistema calcula automaticamente o montante ou unitário correspondente.")
+        st.write("Ajuste os valores reais já apurados ou projeções pontuais. O sistema calcula automaticamente o montante ou unitário correspondente.")
         
-        # Sub-tabela 1: Fornecedores com Tarifa (R$/t)
         st.markdown("##### 1. Fornecedores Tarifários (Editar Tarifa em R$/t)")
         lista_tarifarios = [f for f in st.session_state.fornecedores["Fornecedor"].dropna().unique() if "Tarifa" in tipo_fornec_map.get(f, "")]
         if lista_tarifarios:
@@ -501,7 +493,6 @@ with tab2:
         else:
             res_tar = pd.DataFrame()
 
-        # Sub-tabela 2: Fornecedores de Custo Fixo (R$)
         st.markdown("##### 2. Fornecedores de Custo Fixo (Editar Montante em R$)")
         lista_fixos = [f for f in st.session_state.fornecedores["Fornecedor"].dropna().unique() if "Fixo" in tipo_fornec_map.get(f, "")]
         if lista_fixos:
@@ -525,7 +516,7 @@ with tab2:
             st.success("Ajustes de Real+RF salvos com sucesso!")
             st.rerun()
 
-    # Consolidação Final dos Montantes e Unitários de Real+RF
+    # Consolidação Final de Real+RF
     montante_real_rf = {}
     unitario_real_rf = {}
 
@@ -556,14 +547,12 @@ with tab2:
     total_u_pb = np.where(vol_pb_arr > 0, total_m_pb / vol_pb_arr, 0.0)
     total_u_real_rf = np.where(vol_real_rf_arr > 0, total_m_real_rf / vol_real_rf_arr, 0.0)
 
-    # Linhas ordenadas: TOTAL PB, TOTAL Real+RF, depois intercalando PB e Real+RF
     todos_fornecedores_ordenados = list(dict.fromkeys(list(montante_pb.keys()) + list(montante_real_rf.keys())))
     ordem_linhas = ["TOTAL PB", "TOTAL Real+RF"]
     for f in todos_fornecedores_ordenados:
         ordem_linhas.append(f"{f} (PB)")
         ordem_linhas.append(f"{f} (Real+RF)")
 
-    # Função de estilização para Custos (Verde passado, Azul vigente, Vermelho estouro)
     def estilizar_tabela_custos(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
         for i, col in enumerate(MESES):
