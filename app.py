@@ -18,6 +18,7 @@ FILE_FORNECEDORES = "dados_fornecedores.json"
 FILE_VOLUMES = "dados_volumes.json"
 FILE_INDICES = "dados_indices.json"
 FILE_CUSTOM_RF = "dados_custom_rf.json"
+FILE_PB_FORNECEDORES = "dados_pb_fornecedores.json"
 
 def carregar_json(caminho, default):
     if os.path.exists(caminho):
@@ -36,7 +37,7 @@ def salvar_json(caminho, dados):
         st.error(f"Erro ao salvar dados locais: {e}")
 
 # =========================================================
-# FUNÇÕES DE FORMATAÇÃO PT-BR
+# FORMATAÇÃO PT-BR
 # =========================================================
 def fmt_moeda_br(v):
     if pd.isna(v) or v is None:
@@ -62,12 +63,20 @@ def fmt_pct_br(v):
 # INICIALIZAÇÃO DE DADOS
 # =========================================================
 default_fornec = [
-    {"Fornecedor": "VLI", "Tipo": "Tarifa (R$/t)", "Valor_Base": 113.40, "Gatilho_Mensal": "Diesel", "Mes_Inicio": 1, "Mes_Aniv": 6, "Indice_Aniv": "IPCA"},
-    {"Fornecedor": "FTL", "Tipo": "Tarifa (R$/t)", "Valor_Base": 17.80, "Gatilho_Mensal": "Diesel", "Mes_Inicio": 1, "Mes_Aniv": 9, "Indice_Aniv": "IPCA"},
+    {"Fornecedor": "VLI", "Tipo": "Tarifa (R$/t)", "Valor_Base": 117.48, "Gatilho_Mensal": "Diesel", "Mes_Inicio": 1, "Mes_Aniv": 6, "Indice_Aniv": "IPCA"},
+    {"Fornecedor": "FTL", "Tipo": "Tarifa (R$/t)", "Valor_Base": 17.77, "Gatilho_Mensal": "Diesel", "Mes_Inicio": 1, "Mes_Aniv": 9, "Indice_Aniv": "IPCA"},
     {"Fornecedor": "ASG G5", "Tipo": "Fixo (R$)", "Valor_Base": 104040.00, "Gatilho_Mensal": "Nenhum", "Mes_Inicio": 1, "Mes_Aniv": 5, "Indice_Aniv": "INPC"},
-    {"Fornecedor": "Manutenção VLI", "Tipo": "Fixo (R$)", "Valor_Base": 167200.00, "Gatilho_Mensal": "Nenhum", "Mes_Inicio": 1, "Mes_Aniv": 6, "Indice_Aniv": "IPCA"}
+    {"Fornecedor": "Manutenção VLI", "Tipo": "Fixo (R$)", "Valor_Base": 178000.00, "Gatilho_Mensal": "Nenhum", "Mes_Inicio": 1, "Mes_Aniv": 6, "Indice_Aniv": "IPCA"}
 ]
 default_vol_pb = [151923, 122844, 88439, 136974, 136854, 118845, 138754, 146088, 139023, 147327, 139805, 142788]
+
+# Valores mensais do PB com as regras definidas
+default_pb_fornecedores = {
+    "VLI": [117.48, 116.60, 119.75, 121.42, 122.14, 119.62, 117.15, 114.04, 116.55, 117.26, 118.72, 115.31],
+    "FTL": [17.77, 18.61, 19.23, 18.68, 18.09, 17.52, 17.18, 17.22, 17.10, 16.74, 16.93, 16.32],
+    "ASG G5": [104040.00, 104040.00, 104040.00, 104040.00, 108721.80, 108721.80, 108721.80, 108721.80, 108721.80, 108721.80, 108721.80, 108721.80],
+    "Manutenção VLI": [178000.00] * 12
+}
 
 if "fornecedores" not in st.session_state:
     st.session_state.fornecedores = pd.DataFrame(carregar_json(FILE_FORNECEDORES, default_fornec))
@@ -91,8 +100,14 @@ if "indices" not in st.session_state:
 if "matriz_real_rf_custom" not in st.session_state:
     st.session_state.matriz_real_rf_custom = carregar_json(FILE_CUSTOM_RF, {})
 
-if "pb_desbloqueado" not in st.session_state:
-    st.session_state.pb_desbloqueado = False
+if "pb_fornecedores" not in st.session_state:
+    st.session_state.pb_fornecedores = carregar_json(FILE_PB_FORNECEDORES, default_pb_fornecedores)
+
+if "pb_vol_desbloqueado" not in st.session_state:
+    st.session_state.pb_vol_desbloqueado = False
+
+if "pb_fornec_desbloqueado" not in st.session_state:
+    st.session_state.pb_fornec_desbloqueado = False
 
 tab1, tab2 = st.tabs(["⚙️ Aba 1: Inputs & Premissas Base", "📊 Aba 2: Resultados & Bridges"])
 
@@ -110,7 +125,7 @@ with tab1:
             "Selecione o Mês Vigente Operacional:",
             MESES,
             index=mes_atual_sistema,
-            help="O valor base cadastrado será aplicado neste mês. Meses anteriores ficam em verde (Realizados) e posteriores recebem a projeção encadeada."
+            help="O mês selecionado fica em azul claro. Os meses anteriores ficam em verde (Realizados)."
         )
     mes_vigente_idx = MESES.index(mes_vigente_sel)
 
@@ -156,17 +171,17 @@ with tab1:
             st.rerun()
 
     with st.expander("🔒 Desbloquear Volume PB (Senha: mudar123)", expanded=False):
-        if not st.session_state.pb_desbloqueado:
+        if not st.session_state.pb_vol_desbloqueado:
             col_pwd, col_btn = st.columns([3, 1])
             with col_pwd:
-                senha_pb = st.text_input("Senha de autorização:", type="password", key="pwd_pb")
+                senha_pb_vol = st.text_input("Senha de autorização para Volume PB:", type="password", key="pwd_pb_vol")
             with col_btn:
                 st.write("")
                 st.write("")
-                if st.button("Destravar PB"):
-                    if senha_pb == "mudar123":
-                        st.session_state.pb_desbloqueado = True
-                        st.success("PB desbloqueado!")
+                if st.button("Destravar Volume PB"):
+                    if senha_pb_vol == "mudar123":
+                        st.session_state.pb_vol_desbloqueado = True
+                        st.success("Volume PB desbloqueado!")
                         st.rerun()
                     else:
                         st.error("Senha incorreta!")
@@ -188,21 +203,102 @@ with tab1:
             res_pb = st.data_editor(df_edit_pb, key="edit_pb_ativo_key", use_container_width=True)
             col_b1, col_b2 = st.columns(2)
             with col_b1:
-                if st.button("💾 Confirmar e Salvar Novo PB", type="primary"):
+                if st.button("💾 Confirmar e Salvar Novo Volume PB", type="primary"):
                     st.session_state.vol_pb = [float(res_pb.iloc[0, i]) for i in range(12)]
-                    st.session_state.pb_desbloqueado = False
+                    st.session_state.pb_vol_desbloqueado = False
                     salvar_json(FILE_VOLUMES, {"pb": st.session_state.vol_pb, "real_rf": st.session_state.vol_real_rf})
-                    st.success("PB salvo e travado.")
+                    st.success("Volume PB salvo e travado.")
                     st.rerun()
             with col_b2:
-                if st.button("Cancelar"):
-                    st.session_state.pb_desbloqueado = False
+                if st.button("Cancelar Volume PB"):
+                    st.session_state.pb_vol_desbloqueado = False
                     st.rerun()
 
     st.markdown("---")
     
-    # 2. Premissas Macroeconômicas
-    st.header("2. Índices Macroeconômicos (% ao mês)")
+    # -------------------------------------------------------------
+    # 2. TABELA ÚNICA MENSALIZADA DO PB DOS FORNECEDORES (TRAVADA)
+    # -------------------------------------------------------------
+    st.header("2. Valores Mensais do PB dos Fornecedores (Plano Básico)")
+    st.caption("🔒 *Tabela travada com os valores orçados mensais de cada fornecedor. Tarifas expressas em R$/t e Custos Fixos em R$ mensal.*")
+
+    # Garante que todos os fornecedores cadastrados tenham linha no PB
+    for _, f_row in st.session_state.fornecedores.iterrows():
+        f_nome = str(f_row["Fornecedor"]).strip()
+        if f_nome and f_nome not in st.session_state.pb_fornecedores:
+            st.session_state.pb_fornecedores[f_nome] = [float(f_row.get("Valor_Base", 0.0))] * 12
+
+    # Montagem do DataFrame de Exibição do PB
+    df_pb_fornec_exib = pd.DataFrame.from_dict(
+        st.session_state.pb_fornecedores,
+        orient="index",
+        columns=MESES
+    )
+
+    # Identificação do tipo para formatação correta (R$/t ou R$)
+    tipo_fornec_map = {}
+    for _, f_row in st.session_state.fornecedores.iterrows():
+        tipo_fornec_map[str(f_row["Fornecedor"]).strip()] = str(f_row.get("Tipo", "Tarifa (R$/t)"))
+
+    def formatar_tabela_pb_fornec(df):
+        formatted_df = df.copy()
+        for r in formatted_df.index:
+            t = tipo_fornec_map.get(r, "Tarifa (R$/t)")
+            for c in formatted_df.columns:
+                val = formatted_df.loc[r, c]
+                if "Tarifa" in t:
+                    formatted_df.loc[r, c] = fmt_unit_br(val)
+                else:
+                    formatted_df.loc[r, c] = fmt_moeda_br(val)
+        return formatted_df
+
+    st.dataframe(
+        formatar_tabela_pb_fornec(df_pb_fornec_exib),
+        use_container_width=True
+    )
+
+    with st.expander("🔒 Desbloquear Edição do PB dos Fornecedores (Senha: mudar123)", expanded=False):
+        if not st.session_state.pb_fornec_desbloqueado:
+            col_p_forn, col_b_forn = st.columns([3, 1])
+            with col_p_forn:
+                senha_forn = st.text_input("Senha para alterar o PB dos Fornecedores:", type="password", key="pwd_pb_fornec")
+            with col_b_forn:
+                st.write("")
+                st.write("")
+                if st.button("Destravar PB Fornecedores"):
+                    if senha_forn == "mudar123":
+                        st.session_state.pb_fornec_desbloqueado = True
+                        st.success("PB dos Fornecedores destravado!")
+                        st.rerun()
+                    else:
+                        st.error("Senha incorreta!")
+        else:
+            st.warning("⚠️ Edição do PB dos Fornecedores Habilitada")
+            edit_pb_fornec = st.data_editor(
+                df_pb_fornec_exib.astype(float),
+                use_container_width=True,
+                key="editor_pb_fornec_key"
+            )
+            col_bf1, col_bf2 = st.columns(2)
+            with col_bf1:
+                if st.button("💾 Salvar e Travar Novo PB dos Fornecedores", type="primary"):
+                    for r in edit_pb_fornec.index:
+                        st.session_state.pb_fornecedores[r] = [float(x) for x in edit_pb_fornec.loc[r].values]
+                    salvar_json(FILE_PB_FORNECEDORES, st.session_state.pb_fornecedores)
+                    st.session_state.pb_fornec_desbloqueado = False
+                    st.success("Novo PB dos Fornecedores salvo e travado!")
+                    st.rerun()
+            with col_bf2:
+                if st.button("Cancelar PB Fornecedores"):
+                    st.session_state.pb_fornec_desbloqueado = False
+                    st.rerun()
+
+    st.markdown("---")
+    
+    # -------------------------------------------------------------
+    # 3. PREMISSAS MACROECONÔMICAS
+    # -------------------------------------------------------------
+    st.header("3. Índices Macroeconômicos (% ao mês)")
     df_ind_exib = st.session_state.indices.set_index("Mês").T
 
     def estilizar_indices(df):
@@ -236,9 +332,11 @@ with tab1:
 
     st.markdown("---")
     
-    # 3. Cadastro de Fornecedores
-    st.header("3. Cadastro de Fornecedores & Paramétricas")
-    st.caption("ℹ️ O campo **Mês Início (1 a 12)** define quando o fornecedor entra em operação. O **Valor Base** é o valor já fechado do **Mês Vigente**.")
+    # -------------------------------------------------------------
+    # 4. CADASTRO DE FORNECEDORES & PARAMÉTRICAS (REAL+RF)
+    # -------------------------------------------------------------
+    st.header("4. Cadastro de Fornecedores & Paramétricas (Real+RF)")
+    st.caption("ℹ️ Defina as regras de projeção para o Real+RF. O campo **Valor Base** é o valor do **Mês Vigente**.")
     
     if "Mes_Inicio" not in st.session_state.fornecedores.columns:
         st.session_state.fornecedores["Mes_Inicio"] = 1
@@ -291,7 +389,6 @@ for _, row in st.session_state.fornecedores.iterrows():
     base = float(row.get("Valor_Base", 0.0))
     gatilho = str(row.get("Gatilho_Mensal", "Nenhum"))
     
-    # Mês de início de operação
     mes_inicio_raw = row.get("Mes_Inicio", 1)
     m_inicio = (int(mes_inicio_raw) - 1) if pd.notna(mes_inicio_raw) and mes_inicio_raw > 0 else 0
 
@@ -307,29 +404,28 @@ for _, row in st.session_state.fornecedores.iterrows():
     elif idx_aniv == "IGPM":
         taxa_aniv = np.sum(igpm_taxa)
 
-    # 1. PB Base (Considera o fornecedor ativo a partir de m_inicio)
+    # 1. PB Base: Puxa diretamente da matriz mensal travada do PB dos fornecedores
+    valores_pb_fornec = st.session_state.pb_fornecedores.get(nome, [base] * 12)
     m_pb = np.zeros(12)
     u_pb = np.zeros(12)
+    
     for m in range(12):
         if m >= m_inicio:
+            val_p = float(valores_pb_fornec[m])
             if tipo == "Tarifa (R$/t)":
-                m_pb[m] = base * vol_pb_arr[m]
-                u_pb[m] = base
+                u_pb[m] = val_p
+                m_pb[m] = val_p * vol_pb_arr[m]
             else:
-                m_pb[m] = base
-                u_pb[m] = base / vol_pb_arr[m] if vol_pb_arr[m] > 0 else 0.0
+                m_pb[m] = val_p
+                u_pb[m] = val_p / vol_pb_arr[m] if vol_pb_arr[m] > 0 else 0.0
 
     montante_pb[nome] = m_pb
     unitario_pb[nome] = u_pb
 
     # 2. Real+RF Encadeado:
-    # - Mês vigente (mes_vigente_idx): assume exatamente o Valor_Base (já inclui tudo!).
-    # - Meses anteriores: mantêm o valor base original (ou dados imputados manualmente).
-    # - Meses posteriores: calculados mês a mês com variação de diesel e aniversário de contrato.
     m_calc = np.zeros(12)
     u_calc = np.zeros(12)
     
-    # Preenche meses até o mês vigente
     for m in range(mes_vigente_idx + 1):
         if m >= m_inicio:
             if tipo == "Tarifa (R$/t)":
@@ -339,14 +435,10 @@ for _, row in st.session_state.fornecedores.iterrows():
                 m_calc[m] = base
                 u_calc[m] = base / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
 
-    # Encadeamento para os meses seguintes (m > mes_vigente_idx)
     for m in range(mes_vigente_idx + 1, 12):
         if m < m_inicio:
             continue
-        
-        # Variação do diesel do mês anterior para o atual
         var_mensal = (1.0 + diesel_taxa[m]) if gatilho == "Diesel" else 1.0
-        # Reajuste pontual no mês de aniversário
         var_aniv = (1.0 + taxa_aniv) if m == m_aniv else 1.0
         
         if tipo == "Tarifa (R$/t)":
@@ -397,7 +489,6 @@ with tab2:
             st.success("Valores salvos com sucesso!")
             st.rerun()
 
-    # Montagem consolidada
     montante_real_rf = {}
     unitario_real_rf = {}
     for f in montante_pb.keys():
@@ -444,9 +535,7 @@ with tab2:
     sum_vol_pb = sum(vol_pb_arr)
     sum_vol_rf = sum(vol_real_rf_arr)
 
-    # -------------------------------------------------------------
     # 1. TABELA DE CUSTO UNITÁRIO (PRIMEIRO)
-    # -------------------------------------------------------------
     st.subheader("1. Tabela Comparativa em Unitário (R$/t)")
     dados_u = {}
     for l in ordem_linhas:
@@ -471,9 +560,7 @@ with tab2:
         use_container_width=True
     )
 
-    # -------------------------------------------------------------
     # 2. TABELA DE MONTANTE (DEPOIS)
-    # -------------------------------------------------------------
     st.subheader("2. Tabela Comparativa em Montante (R$)")
     dados_m = {}
     for l in ordem_linhas:
@@ -496,9 +583,7 @@ with tab2:
 
     st.markdown("---")
     
-    # -------------------------------------------------------------
     # 3. BRIDGES WATERFALL
-    # -------------------------------------------------------------
     st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
     def gerar_waterfall(titulo, start_idx, end_idx):
