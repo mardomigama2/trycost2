@@ -19,6 +19,7 @@ FILE_VOLUMES = "dados_volumes.json"
 FILE_INDICES = "dados_indices.json"
 FILE_CUSTOM_RF = "dados_custom_rf.json"
 FILE_PB_FORNECEDORES = "dados_pb_fornecedores.json"
+FILE_HISTORICO_RFX = "historico_rfx.json"
 
 def carregar_json(caminho, default):
     if os.path.exists(caminho):
@@ -102,13 +103,21 @@ if "matriz_real_rf_custom" not in st.session_state:
 if "pb_fornecedores" not in st.session_state:
     st.session_state.pb_fornecedores = carregar_json(FILE_PB_FORNECEDORES, default_pb_fornecedores)
 
+if "historico_rfx" not in st.session_state:
+    st.session_state.historico_rfx = carregar_json(FILE_HISTORICO_RFX, {})
+
 if "pb_vol_desbloqueado" not in st.session_state:
     st.session_state.pb_vol_desbloqueado = False
 
 if "pb_fornec_desbloqueado" not in st.session_state:
     st.session_state.pb_fornec_desbloqueado = False
 
-tab1, tab2 = st.tabs(["⚙️ Aba 1: Inputs & Premissas Base", "📊 Aba 2: Resultados & Bridges"])
+# Três Abas de Trabalho
+tab1, tab2, tab3 = st.tabs([
+    "⚙️ Aba 1: Inputs & Premissas Base",
+    "📊 Aba 2: Controle & Resultados",
+    "📚 Aba 3: Histórico de Versões (RFX)"
+])
 
 # =========================================================
 # ABA 1: INPUTS
@@ -133,9 +142,9 @@ with tab1:
         for i, col in enumerate(MESES):
             if col in styles.columns:
                 if i < mes_vigente_idx:
-                    styles[col] = "background-color: #E8F5E9;"  # Verde claro
+                    styles[col] = "background-color: #E8F5E9;"
                 elif i == mes_vigente_idx:
-                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
+                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"
         return styles
 
     def estilizar_tabela_volume(df):
@@ -322,7 +331,7 @@ with tab1:
     # 4. SIMULADOR RF
     # -------------------------------------------------------------
     st.header("4. Simulador RF")
-    st.caption("ℹ️ Defina o novo valor base e o mês em que ele entra em vigor. No mês de início, o valor assume exatamente o Valor Base. Os reajustes paramétricos incidem nos meses seguintes.")
+    st.caption("ℹ️ Defina o novo valor base e o mês de início da nova regra. Os reajustes paramétricos incidem nos meses seguintes.")
     
     if "Mes_Inicio" not in st.session_state.fornecedores.columns:
         st.session_state.fornecedores["Mes_Inicio"] = 1
@@ -347,7 +356,6 @@ with tab1:
         st.session_state.fornecedores = edit_fornec
         salvar_json(FILE_FORNECEDORES, edit_fornec.to_dict(orient="records"))
         
-        # Limpa travas manuais futuras para sincronizar a projeção
         st.session_state.matriz_real_rf_custom = {}
         salvar_json(FILE_CUSTOM_RF, {})
         
@@ -356,7 +364,7 @@ with tab1:
 
 
 # =========================================================
-# MOTOR DE CÁLCULO
+# MOTOR DE CÁLCULO DINÂMICO
 # =========================================================
 vol_pb_arr = np.array(st.session_state.vol_pb, dtype=float)
 vol_real_rf_arr = np.array(st.session_state.vol_real_rf, dtype=float)
@@ -370,7 +378,7 @@ igpm_taxa = df_ind["IGPM_%"].values / 100.0
 montante_pb = {}
 unitario_pb = {}
 
-# 1. PB 100% BLINDADO: Puxa ESTRITAMENTE da Tabela 2 Custo PB
+# 1. PB 100% BLINDADO
 for f_nome, vals_pb in st.session_state.pb_fornecedores.items():
     f_nome_str = str(f_nome).strip()
     tipo_f = tipo_fornec_map.get(f_nome_str, "Tarifa (R$/t)")
@@ -384,7 +392,6 @@ for f_nome, vals_pb in st.session_state.pb_fornecedores.items():
         unitario_pb[f_nome_str] = np.where(vol_pb_arr > 0, vals_arr / vol_pb_arr, 0.0)
 
 # 2. MOTOR DINÂMICO DE REAL+RF COM ENCATENAMENTO DE INTERVALO
-# Se o mês vigente foi ajustado na Aba 2, ele serve como âncora para os meses seguintes até o simulador!
 montante_real_rf = {}
 unitario_real_rf = {}
 
@@ -418,7 +425,7 @@ for _, row in st.session_state.fornecedores.iterrows():
     curva_u = np.zeros(12)
     curva_m = np.zeros(12)
 
-    # Passo A: Meses Passados (< mes_vigente_idx)
+    # Meses Passados (< mes_vigente_idx)
     for m in range(mes_vigente_idx):
         if custom_vals is not None and pd.notna(custom_vals[m]) and float(custom_vals[m]) > 0:
             val_p = float(custom_vals[m])
@@ -434,11 +441,10 @@ for _, row in st.session_state.fornecedores.iterrows():
             curva_m[m] = val_p
             curva_u[m] = val_p / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
 
-    # Passo B: Mês Vigente (mes_vigente_idx) -> ÂNCORA
+    # Mês Vigente (mes_vigente_idx) -> ÂNCORA
     if custom_vals is not None and pd.notna(custom_vals[mes_vigente_idx]) and float(custom_vals[mes_vigente_idx]) > 0:
         val_vigente = float(custom_vals[mes_vigente_idx])
     else:
-        # Se m_inicio_sim já ocorreu ou ocorre agora, pega base_simulador; senão histórico do PB
         val_vigente = base_simulador if mes_vigente_idx >= m_inicio_sim else float(hist_pb_forn[mes_vigente_idx])
 
     if "Tarifa" in tipo:
@@ -448,11 +454,8 @@ for _, row in st.session_state.fornecedores.iterrows():
         curva_m[mes_vigente_idx] = val_vigente
         curva_u[mes_vigente_idx] = val_vigente / vol_real_rf_arr[mes_vigente_idx] if vol_real_rf_arr[mes_vigente_idx] > 0 else 0.0
 
-    # Passo C: Meses Futuros (> mes_vigente_idx)
-    # Se m < m_inicio_sim: evolui a partir da âncora do mês vigente aplicando diesel/inflação!
-    # Se m >= m_inicio_sim: aplica a nova regra do Simulador RF!
+    # Meses Futuros (> mes_vigente_idx)
     for m in range(mes_vigente_idx + 1, 12):
-        # Se o usuário ajustou um valor manual específico na Aba 2 para este mês, respeita
         if custom_vals is not None and pd.notna(custom_vals[m]) and float(custom_vals[m]) > 0:
             val_m = float(custom_vals[m])
             if "Tarifa" in tipo:
@@ -467,7 +470,6 @@ for _, row in st.session_state.fornecedores.iterrows():
         var_aniv = (1.0 + taxa_aniv) if m == m_aniv else 1.0
 
         if m == m_inicio_sim and m_inicio_sim > mes_vigente_idx:
-            # Ponto de corte do Simulador RF: assume a nova base do simulador
             if "Tarifa" in tipo:
                 curva_u[m] = base_simulador
                 curva_m[m] = base_simulador * vol_real_rf_arr[m]
@@ -475,7 +477,6 @@ for _, row in st.session_state.fornecedores.iterrows():
                 curva_m[m] = base_simulador
                 curva_u[m] = base_simulador / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
         else:
-            # Encadeia a partir do mês anterior (m-1)
             if "Tarifa" in tipo:
                 tarifa_ant = curva_u[m - 1]
                 tarifa_m = tarifa_ant * var_mensal * var_aniv
@@ -490,12 +491,49 @@ for _, row in st.session_state.fornecedores.iterrows():
     unitario_real_rf[nome] = curva_u
     montante_real_rf[nome] = curva_m
 
+# Totais consolidados
+total_m_pb = sum(montante_pb.values())
+total_m_real_rf = sum(montante_real_rf.values())
+total_u_pb = np.where(vol_pb_arr > 0, total_m_pb / vol_pb_arr, 0.0)
+total_u_real_rf = np.where(vol_real_rf_arr > 0, total_m_real_rf / vol_real_rf_arr, 0.0)
+
+todos_fornecedores_ordenados = list(dict.fromkeys(list(montante_pb.keys()) + list(montante_real_rf.keys())))
+ordem_linhas = ["TOTAL PB", "TOTAL Real+RF"]
+for f in todos_fornecedores_ordenados:
+    ordem_linhas.append(f"{f} (PB)")
+    ordem_linhas.append(f"{f} (Real+RF)")
+
+def estilizar_tabela_custos(df):
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    for i, col in enumerate(MESES):
+        bg = ""
+        if i < mes_vigente_idx:
+            bg = "background-color: #E8F5E9;"
+        elif i == mes_vigente_idx:
+            bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"
+        
+        for idx in df.index:
+            cell_style = bg
+            if "(Real+RF)" in idx:
+                idx_pb = idx.replace(" (Real+RF)", " (PB)")
+                if idx_pb in df.index and float(df.loc[idx, col]) > float(df.loc[idx_pb, col]):
+                    cell_style += " color: #D32F2F; font-weight: bold;"
+            elif idx == "TOTAL Real+RF":
+                if float(df.loc["TOTAL Real+RF", col]) > float(df.loc["TOTAL PB", col]):
+                    cell_style += " color: #D32F2F; font-weight: bold;"
+                    
+            styles.loc[idx, col] = cell_style
+    return styles
+
+sum_vol_pb = sum(vol_pb_arr)
+sum_vol_rf = sum(vol_real_rf_arr)
+
 
 # =========================================================
-# ABA 2: RESULTADOS & BRIDGES
+# ABA 2: RESULTADOS & CONTROLE MÊS A MÊS
 # =========================================================
 with tab2:
-    st.header("Resultados Consolidados & Bridges")
+    st.header("Resultados Consolidados & Bridges (Mês a Mês)")
     st.markdown(
         f"""
         <div style='display: flex; gap: 20px; align-items: center; margin-bottom: 12px;'>
@@ -550,45 +588,8 @@ with tab2:
                 st.info("Ajustes manuais limpos. Tabelas sincronizadas diretamente com o Simulador RF!")
                 st.rerun()
 
-    # Totais consolidados
-    total_m_pb = sum(montante_pb.values())
-    total_m_real_rf = sum(montante_real_rf.values())
-    total_u_pb = np.where(vol_pb_arr > 0, total_m_pb / vol_pb_arr, 0.0)
-    total_u_real_rf = np.where(vol_real_rf_arr > 0, total_m_real_rf / vol_real_rf_arr, 0.0)
-
-    todos_fornecedores_ordenados = list(dict.fromkeys(list(montante_pb.keys()) + list(montante_real_rf.keys())))
-    ordem_linhas = ["TOTAL PB", "TOTAL Real+RF"]
-    for f in todos_fornecedores_ordenados:
-        ordem_linhas.append(f"{f} (PB)")
-        ordem_linhas.append(f"{f} (Real+RF)")
-
-    def estilizar_tabela_custos(df):
-        styles = pd.DataFrame("", index=df.index, columns=df.columns)
-        for i, col in enumerate(MESES):
-            bg = ""
-            if i < mes_vigente_idx:
-                bg = "background-color: #E8F5E9;"  # Verde claro
-            elif i == mes_vigente_idx:
-                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
-            
-            for idx in df.index:
-                cell_style = bg
-                if "(Real+RF)" in idx:
-                    idx_pb = idx.replace(" (Real+RF)", " (PB)")
-                    if idx_pb in df.index and float(df.loc[idx, col]) > float(df.loc[idx_pb, col]):
-                        cell_style += " color: #D32F2F; font-weight: bold;"
-                elif idx == "TOTAL Real+RF":
-                    if float(df.loc["TOTAL Real+RF", col]) > float(df.loc["TOTAL PB", col]):
-                        cell_style += " color: #D32F2F; font-weight: bold;"
-                        
-                styles.loc[idx, col] = cell_style
-        return styles
-
-    sum_vol_pb = sum(vol_pb_arr)
-    sum_vol_rf = sum(vol_real_rf_arr)
-
     # -------------------------------------------------------------
-    # 1. TABELA DE CUSTO UNITÁRIO (PRIMEIRO)
+    # 1. TABELA DE CUSTO UNITÁRIO
     # -------------------------------------------------------------
     st.subheader("1. Tabela Comparativa em Unitário (R$/t)")
     dados_u = {}
@@ -617,7 +618,7 @@ with tab2:
     )
 
     # -------------------------------------------------------------
-    # 2. TABELA DE MONTANTE (DEPOIS)
+    # 2. TABELA DE MONTANTE
     # -------------------------------------------------------------
     st.subheader("2. Tabela Comparativa em Montante (R$)")
     dados_m = {}
@@ -648,20 +649,23 @@ with tab2:
     # -------------------------------------------------------------
     st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
-    def gerar_waterfall(titulo, start_idx, end_idx):
-        v_pb = vol_pb_arr[start_idx:end_idx].sum()
-        v_rf = vol_real_rf_arr[start_idx:end_idx].sum()
+    def gerar_waterfall(titulo, start_idx, end_idx, m_pb_dict, m_rf_dict, v_pb_arr, v_rf_arr):
+        v_pb = v_pb_arr[start_idx:end_idx].sum()
+        v_rf = v_rf_arr[start_idx:end_idx].sum()
         
-        u_pb_tot = total_m_pb[start_idx:end_idx].sum() / v_pb if v_pb > 0 else 0.0
-        u_rf_tot = total_m_real_rf[start_idx:end_idx].sum() / v_rf if v_rf > 0 else 0.0
+        tot_pb = sum([m_pb_dict[k][start_idx:end_idx].sum() for k in m_pb_dict])
+        tot_rf = sum([m_rf_dict[k][start_idx:end_idx].sum() for k in m_rf_dict])
+
+        u_pb_tot = tot_pb / v_pb if v_pb > 0 else 0.0
+        u_rf_tot = tot_rf / v_rf if v_rf > 0 else 0.0
 
         x = ["PB Base"]
         y = [u_pb_tot]
         measures = ["absolute"]
 
         for f in todos_fornecedores_ordenados:
-            m_f_pb = montante_pb.get(f, np.zeros(12))[start_idx:end_idx].sum()
-            m_f_rf = montante_real_rf.get(f, np.zeros(12))[start_idx:end_idx].sum()
+            m_f_pb = m_pb_dict.get(f, np.zeros(12))[start_idx:end_idx].sum()
+            m_f_rf = m_rf_dict.get(f, np.zeros(12))[start_idx:end_idx].sum()
             
             u_f_pb = m_f_pb / v_pb if v_pb > 0 else 0.0
             u_f_rf = m_f_rf / v_rf if v_rf > 0 else 0.0
@@ -712,10 +716,185 @@ with tab2:
     ])
 
     with b_tab1:
-        st.plotly_chart(gerar_waterfall(f"Bridge Unitário: Mês de {mes_vigente_sel} (PB vs Real+RF)", mes_vigente_idx, mes_vigente_idx + 1), use_container_width=True)
+        st.plotly_chart(gerar_waterfall(f"Bridge Unitário: Mês de {mes_vigente_sel} (PB vs Real+RF)", mes_vigente_idx, mes_vigente_idx + 1, montante_pb, montante_real_rf, vol_pb_arr, vol_real_rf_arr), use_container_width=True)
 
     with b_tab2:
-        st.plotly_chart(gerar_waterfall(f"Bridge Unitário YTD: Janeiro a {mes_vigente_sel} (PB vs Real+RF)", 0, mes_vigente_idx + 1), use_container_width=True)
+        st.plotly_chart(gerar_waterfall(f"Bridge Unitário YTD: Janeiro a {mes_vigente_sel} (PB vs Real+RF)", 0, mes_vigente_idx + 1, montante_pb, montante_real_rf, vol_pb_arr, vol_real_rf_arr), use_container_width=True)
 
     with b_tab3:
-        st.plotly_chart(gerar_waterfall("Bridge Unitário Full Year: Jan a Dez (PB vs Real+RF)", 0, 12), use_container_width=True)
+        st.plotly_chart(gerar_waterfall("Bridge Unitário Full Year: Jan a Dez (PB vs Real+RF)", 0, 12, montante_pb, montante_real_rf, vol_pb_arr, vol_real_rf_arr), use_container_width=True)
+
+    st.markdown("---")
+    
+    # -------------------------------------------------------------
+    # 4. BOTÃO PARA CONGELAR E SALVAR A PROJEÇÃO RFX
+    # -------------------------------------------------------------
+    st.subheader("📸 Salvar Versão Oficial de Rolling Forecast (RFX)")
+    st.caption("Grave o cenário atual como uma versão histórica oficial (ex.: RF03, RF06, RF09) para consultas e apresentações à diretoria na Aba 3.")
+    
+    col_rf_nome, col_rf_btn = st.columns([2, 2])
+    with col_rf_nome:
+        sugestao_nome = f"RF{mes_vigente_idx + 1:02d}"
+        nome_versao_rfx = st.text_input("Nome da Versão:", value=sugestao_nome, help="Exemplo: RF03, RF06, RF09")
+    with col_rf_btn:
+        st.write("")
+        st.write("")
+        if st.button("💾 Congelar e Salvar Versão RFX", type="primary"):
+            dados_congelados = {
+                "data_gravacao": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "mes_corte": mes_vigente_sel,
+                "vol_pb": list(vol_pb_arr),
+                "vol_real_rf": list(vol_real_rf_arr),
+                "unitario_pb": {k: list(v) for k, v in unitario_pb.items()},
+                "unitario_real_rf": {k: list(v) for k, v in unitario_real_rf.items()},
+                "montante_pb": {k: list(v) for k, v in montante_pb.items()},
+                "montante_real_rf": {k: list(v) for k, v in montante_real_rf.items()}
+            }
+            st.session_state.historico_rfx[nome_versao_rfx] = dados_congelados
+            salvar_json(FILE_HISTORICO_RFX, st.session_state.historico_rfx)
+            st.success(f"✅ Versão '{nome_versao_rfx}' gravada com sucesso! Consulte-a a qualquer momento na 'Aba 3: Histórico de Versões'.")
+            st.rerun()
+
+
+# =========================================================
+# ABA 3: HISTÓRICO DE VERSÕES CONGELADAS (RFX)
+# =========================================================
+with tab3:
+    st.header("📚 Relatórios de Rolling Forecast Congelados (RFX)")
+    st.caption("Consulte os cenários oficiais salvos e compare as projeções históricas apresentadas à diretoria.")
+
+    versoes_disponiveis = list(st.session_state.historico_rfx.keys())
+
+    if not versoes_disponiveis:
+        st.info("Nenhuma versão de RFX foi salva até o momento. Vá até a Aba 2 e utilize o botão '📸 Congelar e Salvar Versão RFX'.")
+    else:
+        col_v_sel, col_v_del = st.columns([3, 1])
+        with col_v_sel:
+            versao_selecionada = st.selectbox("Selecione a Versão de Rolling Forecast para Visualizar:", versoes_disponiveis)
+        with col_v_del:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ Excluir esta Versão"):
+                del st.session_state.historico_rfx[versao_selecionada]
+                salvar_json(FILE_HISTORICO_RFX, st.session_state.historico_rfx)
+                st.warning(f"Versão {versao_selecionada} excluída com sucesso.")
+                st.rerun()
+
+        dados_v = st.session_state.historico_rfx[versao_selecionada]
+        st.success(f"📌 **Relatório {versao_selecionada}** | Salvo em: **{dados_v.get('data_gravacao', '-')}** | Mês Vigente no Fechamento: **{dados_v.get('mes_corte', '-')}**")
+
+        v_vol_pb = np.array(dados_v["vol_pb"])
+        v_vol_rf = np.array(dados_v["vol_real_rf"])
+        v_montante_pb = {k: np.array(v) for k, v in dados_v["montante_pb"].items()}
+        v_montante_rf = {k: np.array(v) for k, v in dados_v["montante_real_rf"].items()}
+        v_unit_pb = {k: np.array(v) for k, v in dados_v["unitario_pb"].items()}
+        v_unit_rf = {k: np.array(v) for k, v in dados_v["unitario_real_rf"].items()}
+
+        v_tot_m_pb = sum(v_montante_pb.values())
+        v_tot_m_rf = sum(v_montante_rf.values())
+        v_tot_u_pb = np.where(v_vol_pb > 0, v_tot_m_pb / v_vol_pb, 0.0)
+        v_tot_u_rf = np.where(v_vol_rf > 0, v_tot_m_rf / v_vol_rf, 0.0)
+
+        # Indicadores Chave do RFX
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1.metric(f"Volume Total ({versao_selecionada})", f"{sum(v_vol_rf):,.0f} t".replace(",", "."))
+        kpi2.metric(f"Montante Total ({versao_selecionada})", fmt_moeda_br(sum(v_tot_m_rf)))
+        kpi3.metric(f"Unitário Médio ({versao_selecionada})", fmt_unit_br(sum(v_tot_m_rf) / sum(v_vol_rf)))
+        delta_u_rfx = (sum(v_tot_m_rf) / sum(v_vol_rf)) - (sum(v_tot_m_pb) / sum(v_vol_pb))
+        kpi4.metric(f"∆ Unitário vs PB", fmt_unit_br(delta_u_rfx), delta=f"{delta_u_rfx:+.2f} R$/t", delta_color="inverse")
+
+        st.markdown("---")
+
+        # 1. Tabela de Custo Unitário Salvo
+        st.subheader(f"1. Custo Unitário (R$/t) - Versão {versao_selecionada}")
+        v_ordem = ["TOTAL PB", f"TOTAL {versao_selecionada}"]
+        for f in v_montante_pb.keys():
+            v_ordem.append(f"{f} (PB)")
+            v_ordem.append(f"{f} ({versao_selecionada})")
+
+        dados_v_u = {}
+        for l in v_ordem:
+            if l == "TOTAL PB":
+                dados_v_u[l] = list(v_tot_u_pb) + [sum(v_tot_m_pb) / sum(v_vol_pb)]
+            elif l == f"TOTAL {versao_selecionada}":
+                dados_v_u[l] = list(v_tot_u_rf) + [sum(v_tot_m_rf) / sum(v_vol_rf)]
+            elif "(PB)" in l:
+                fn = l.replace(" (PB)", "")
+                dados_v_u[l] = list(v_unit_pb.get(fn, np.zeros(12))) + [sum(v_montante_pb.get(fn, np.zeros(12))) / sum(v_vol_pb)]
+            elif f"({versao_selecionada})" in l:
+                fn = l.replace(f" ({versao_selecionada})", "")
+                dados_v_u[l] = list(v_unit_rf.get(fn, np.zeros(12))) + [sum(v_montante_rf.get(fn, np.zeros(12))) / sum(v_vol_rf)]
+
+        df_v_exib_u = pd.DataFrame.from_dict(dados_v_u, orient="index", columns=MESES + ["Média Ponderada"])
+        st.dataframe(df_v_exib_u.style.format(fmt_unit_br), use_container_width=True)
+
+        # 2. Tabela de Montante Salvo
+        st.subheader(f"2. Montante (R$) - Versão {versao_selecionada}")
+        dados_v_m = {}
+        for l in v_ordem:
+            if l == "TOTAL PB":
+                dados_v_m[l] = list(v_tot_m_pb) + [sum(v_tot_m_pb)]
+            elif l == f"TOTAL {versao_selecionada}":
+                dados_v_m[l] = list(v_tot_m_rf) + [sum(v_tot_m_rf)]
+            elif "(PB)" in l:
+                fn = l.replace(" (PB)", "")
+                dados_v_m[l] = list(v_montante_pb.get(fn, np.zeros(12))) + [sum(v_montante_pb.get(fn, np.zeros(12)))]
+            elif f"({versao_selecionada})" in l:
+                fn = l.replace(f" ({versao_selecionada})", "")
+                dados_v_m[l] = list(v_montante_rf.get(fn, np.zeros(12))) + [sum(v_montante_rf.get(fn, np.zeros(12)))]
+
+        df_v_exib_m = pd.DataFrame.from_dict(dados_v_m, orient="index", columns=MESES + ["Total Ano"])
+        st.dataframe(df_v_exib_m.style.format(fmt_moeda_br), use_container_width=True)
+
+        st.markdown("---")
+        
+        # 3. Bridge Waterfall da Versão Salva
+        st.subheader(f"3. Bridge Unitário: PB vs {versao_selecionada} (Ano Completo)")
+        
+        u_base_pb = sum(v_tot_m_pb) / sum(v_vol_pb)
+        u_final_rf = sum(v_tot_m_rf) / sum(v_vol_rf)
+        
+        bx = ["PB Base"]
+        by = [u_base_pb]
+        bmeasures = ["absolute"]
+
+        for f in v_montante_pb.keys():
+            u_f_pb = sum(v_montante_pb[f]) / sum(v_vol_pb)
+            u_f_rf = sum(v_montante_rf[f]) / sum(v_vol_rf)
+            bx.append(f)
+            by.append(u_f_rf - u_f_pb)
+            bmeasures.append("relative")
+
+        bx.append(f"{versao_selecionada} Final")
+        by.append(0)
+        bmeasures.append("total")
+
+        btextos = []
+        for v, m in zip(by, bmeasures):
+            if m == "relative":
+                sinal = "+" if v >= 0 else "-"
+                btextos.append(f"{sinal} R$ {abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            else:
+                btextos.append(f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+        fig_v = go.Figure(go.Waterfall(
+            name=f"Bridge {versao_selecionada}",
+            orientation="v",
+            measure=bmeasures,
+            x=bx,
+            textposition="outside",
+            text=btextos,
+            y=by,
+            connector={"line": {"color": "#666"}},
+            increasing={"marker": {"color": "#E53935"}},
+            decreasing={"marker": {"color": "#43A047"}},
+            totals={"marker": {"color": "#1E88E5"}}
+        ))
+        fig_v.update_layout(
+            title=f"Bridge de Variação Unitária: PB vs {versao_selecionada} (R$/t)",
+            yaxis_title="R$/t",
+            waterfallgap=0.3,
+            height=430,
+            margin=dict(l=30, r=30, t=50, b=30)
+        )
+        st.plotly_chart(fig_v, use_container_width=True)
