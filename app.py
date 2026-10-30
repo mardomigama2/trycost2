@@ -127,6 +127,10 @@ if "pb_vol_desbloqueado" not in st.session_state:
 if "pb_fornec_desbloqueado" not in st.session_state:
     st.session_state.pb_fornec_desbloqueado = False
 
+# Estado do Mês Vigente Operacional
+if "mes_vigente_operacional" not in st.session_state:
+    st.session_state.mes_vigente_operacional = MESES[mes_atual_sistema]
+
 # Abas de Trabalho
 tab1, tab2, tab3 = st.tabs([
     "⚙️ Aba 1: Inputs & Premissas Base",
@@ -147,10 +151,13 @@ with tab1:
         mes_vigente_sel = st.selectbox(
             "Selecione o Mês Vigente Operacional:",
             MESES,
-            index=mes_atual_sistema,
+            index=MESES.index(st.session_state.mes_vigente_operacional),
+            key="sel_mes_vigente_aba1",
             help="O mês selecionado fica em azul claro. Os meses anteriores ficam em verde (Realizados)."
         )
-    mes_vigente_idx = MESES.index(mes_vigente_sel)
+        st.session_state.mes_vigente_operacional = mes_vigente_sel
+        
+    mes_vigente_idx = MESES.index(st.session_state.mes_vigente_operacional)
 
     def estilizar_colunas_periodo_padrao(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
@@ -381,6 +388,9 @@ with tab1:
 # =========================================================
 # MOTOR DE CÁLCULO DINÂMICO
 # =========================================================
+mes_vigente_idx = MESES.index(st.session_state.mes_vigente_operacional)
+mes_vigente_sel = st.session_state.mes_vigente_operacional
+
 vol_pb_arr = np.array(st.session_state.vol_pb, dtype=float)
 vol_real_rf_arr = np.array(st.session_state.vol_real_rf, dtype=float)
 df_ind = st.session_state.indices
@@ -552,8 +562,8 @@ with tab2:
     st.markdown(
         f"""
         <div style='display: flex; gap: 20px; align-items: center; margin-bottom: 12px;'>
-            <span>🟢 <b>Verde Claro:</b> Meses Realizados (anteriores a {mes_vigente_sel})</span>
-            <span>🔵 <b>Azul Claro:</b> Mês Vigente Atual ({mes_vigente_sel})</span>
+            <span>🟢 <b>Verde Claro:</b> Meses Realizados (anteriores a {st.session_state.mes_vigente_operacional})</span>
+            <span>🔵 <b>Azul Claro:</b> Mês Vigente Atual ({st.session_state.mes_vigente_operacional})</span>
             <span>🔴 <b>Texto em Vermelho:</b> Custo Real+RF <b>maior</b> que o PB orçado (desvio desfavorável)</span>
         </div>
         """,
@@ -660,37 +670,51 @@ with tab2:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 3. REGISTRO DE JUSTIFICATIVAS COM CONTROLE DE POSIÇÃO
+    # 3. BLOCO DA BRIDGE: SELETOR DE MÊS PRÓXIMO À BRIDGE
     # -------------------------------------------------------------
-    st.header("📝 Registro de Justificativas das Variações")
-    st.caption("Insira o motivo das variações. O texto cresce na vertical e você pode ajustar o deslocamento para evitar que uma placa cubra a outra.")
+    st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
-    chave_just_mes = f"Mês: {mes_vigente_sel}"
-    chave_just_ytd = f"YTD (Jan-{mes_vigente_sel})"
+    # Seletor posicionado diretamente no topo da Bridge
+    col_bridge_sel, col_bridge_info = st.columns([2, 4])
+    with col_bridge_sel:
+        mes_bridge_escolhido = st.selectbox(
+            "📍 Escolha o Mês de Referência da Bridge:",
+            MESES,
+            index=MESES.index(st.session_state.mes_vigente_operacional),
+            key="sel_mes_referencia_bridge",
+            help="Define o mês exibido na Bridge do Mês Vigente e o limite final do YTD."
+        )
+    with col_bridge_info:
+        st.write("")
+        st.info(f"Visualizando análise de desvios para o mês de **{mes_bridge_escolhido}** e YTD de **Jan a {mes_bridge_escolhido}**.")
+
+    idx_bridge = MESES.index(mes_bridge_escolhido)
+
+    # Chaves de justificativas para o mês selecionado na Bridge
+    chave_just_mes = f"Mês: {mes_bridge_escolhido}"
+    chave_just_ytd = f"YTD (Jan-{mes_bridge_escolhido})"
     chave_just_fy = "Full Year (FY)"
 
-    # Inicialização da estrutura de justificativas (com texto, yshift e xshift)
     for c in [chave_just_mes, chave_just_ytd, chave_just_fy]:
         if c not in st.session_state.justificativas:
             st.session_state.justificativas[c] = {}
         for f in todos_fornecedores_ordenados:
             if f not in st.session_state.justificativas[c] or not isinstance(st.session_state.justificativas[c][f], dict):
-                # Se era texto antigo simples ou inexistente, converte para dict
                 antigo_txt = st.session_state.justificativas[c].get(f, "")
                 txt_limpo = antigo_txt if isinstance(antigo_txt, str) else ""
                 st.session_state.justificativas[c][f] = {"texto": txt_limpo, "yshift": 25, "xshift": 0}
 
-    with st.expander("✏️ Editar Justificativas e Ajustar Posição das Placas", expanded=False):
+    # Painel de Justificativas logo antes dos gráficos
+    with st.expander(f"📝 Editar Justificativas e Posições das Placas ({mes_bridge_escolhido})", expanded=False):
         tab_j1, tab_j2, tab_j3 = st.tabs([
-            f"📅 Mês Vigente ({mes_vigente_sel})",
-            f"📈 YTD (Jan-{mes_vigente_sel})",
+            f"📅 Mês ({mes_bridge_escolhido})",
+            f"📈 YTD (Jan-{mes_bridge_escolhido})",
             "🌐 Full Year (FY)"
         ])
 
-        # Editor Mês Vigente
         with tab_j1:
-            u_pb_m = [unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
-            u_rf_m = [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
+            u_pb_m = [unitario_pb.get(f, np.zeros(12))[idx_bridge] for f in todos_fornecedores_ordenados]
+            u_rf_m = [unitario_real_rf.get(f, np.zeros(12))[idx_bridge] for f in todos_fornecedores_ordenados]
             df_j_mes = pd.DataFrame({
                 "Fornecedor": todos_fornecedores_ordenados,
                 "Desvio (R$/t)": np.array(u_rf_m) - np.array(u_pb_m),
@@ -704,19 +728,18 @@ with tab2:
                 column_config={
                     "Desvio (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
                     "Justificativa": st.column_config.TextColumn("Justificativa", width="large"),
-                    "Subir/Descer (Y)": st.column_config.NumberColumn("Subir/Descer Y (px)", help="Aumente para subir a placa (ex: 45, 65) e evitar cobrir a placa vizinha", step=5),
-                    "Mover Lateral (X)": st.column_config.NumberColumn("Mover Lateral X (px)", help="Desloque para esquerda (-) ou direita (+) se necessário", step=5)
+                    "Subir/Descer (Y)": st.column_config.NumberColumn("Subir/Descer Y (px)", step=5),
+                    "Mover Lateral (X)": st.column_config.NumberColumn("Mover Lateral X (px)", step=5)
                 },
-                key="ed_j_mes",
+                key="ed_j_mes_bridge",
                 use_container_width=True
             )
 
-        # Editor YTD
         with tab_j2:
-            v_pb_y = vol_pb_arr[:mes_vigente_idx + 1].sum()
-            v_rf_y = vol_real_rf_arr[:mes_vigente_idx + 1].sum()
-            u_pb_y = [montante_pb.get(f, np.zeros(12))[:mes_vigente_idx + 1].sum() / v_pb_y if v_pb_y > 0 else 0.0 for f in todos_fornecedores_ordenados]
-            u_rf_y = [montante_real_rf.get(f, np.zeros(12))[:mes_vigente_idx + 1].sum() / v_rf_y if v_rf_y > 0 else 0.0 for f in todos_fornecedores_ordenados]
+            v_pb_y = vol_pb_arr[:idx_bridge + 1].sum()
+            v_rf_y = vol_real_rf_arr[:idx_bridge + 1].sum()
+            u_pb_y = [montante_pb.get(f, np.zeros(12))[:idx_bridge + 1].sum() / v_pb_y if v_pb_y > 0 else 0.0 for f in todos_fornecedores_ordenados]
+            u_rf_y = [montante_real_rf.get(f, np.zeros(12))[:idx_bridge + 1].sum() / v_rf_y if v_rf_y > 0 else 0.0 for f in todos_fornecedores_ordenados]
             df_j_ytd = pd.DataFrame({
                 "Fornecedor": todos_fornecedores_ordenados,
                 "Desvio YTD (R$/t)": np.array(u_rf_y) - np.array(u_pb_y),
@@ -733,11 +756,10 @@ with tab2:
                     "Subir/Descer (Y)": st.column_config.NumberColumn("Subir/Descer Y (px)", step=5),
                     "Mover Lateral (X)": st.column_config.NumberColumn("Mover Lateral X (px)", step=5)
                 },
-                key="ed_j_ytd",
+                key="ed_j_ytd_bridge",
                 use_container_width=True
             )
 
-        # Editor FY
         with tab_j3:
             v_pb_f = sum_vol_pb
             v_rf_f = sum_vol_rf
@@ -759,11 +781,11 @@ with tab2:
                     "Subir/Descer (Y)": st.column_config.NumberColumn("Subir/Descer Y (px)", step=5),
                     "Mover Lateral (X)": st.column_config.NumberColumn("Mover Lateral X (px)", step=5)
                 },
-                key="ed_j_fy",
+                key="ed_j_fy_bridge",
                 use_container_width=True
             )
 
-        if st.button("💾 Salvar Todas as Justificativas e Posições", type="primary"):
+        if st.button("💾 Salvar Justificativas e Posições", type="primary"):
             for _, r in res_j_mes.iterrows():
                 st.session_state.justificativas[chave_just_mes][r["Fornecedor"]] = {
                     "texto": str(r["Justificativa"]).strip(),
@@ -783,15 +805,8 @@ with tab2:
                     "xshift": int(r["Mover Lateral (X)"])
                 }
             salvar_json(FILE_JUSTIFICATIVAS, st.session_state.justificativas)
-            st.success("Justificativas e posições salvas com sucesso!")
+            st.success("Justificativas salvas com sucesso!")
             st.rerun()
-
-    st.markdown("---")
-    
-    # -------------------------------------------------------------
-    # 4. BRIDGES WATERFALL
-    # -------------------------------------------------------------
-    st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
     def gerar_waterfall_fpna(titulo, label_final, start_idx, end_idx, chave_just_atual):
         v_pb = vol_pb_arr[start_idx:end_idx].sum()
@@ -910,7 +925,7 @@ with tab2:
                     text=f"💬 <i>{texto_formatado}</i>",
                     showarrow=False,
                     font=dict(size=9.5, color=cor_texto, family="Arial, sans-serif"),
-                    bgcolor="#FFFFFF",  # Fundo 100% Branco
+                    bgcolor="#FFFFFF",
                     bordercolor=cor_borda,
                     borderwidth=1.2,
                     borderpad=5,
@@ -930,18 +945,18 @@ with tab2:
         return fig
 
     b_tab1, b_tab2, b_tab3 = st.tabs([
-        f"📅 Bridge Mês Vigente ({mes_vigente_sel})",
-        f"📈 Bridge YTD (Jan até {mes_vigente_sel})",
+        f"📅 Bridge Mês de Referência ({mes_bridge_escolhido})",
+        f"📈 Bridge YTD (Jan até {mes_bridge_escolhido})",
         "🌐 Bridge Full Year (FY - Jan a Dez)"
     ])
 
     with b_tab1:
         st.plotly_chart(
             gerar_waterfall_fpna(
-                f"Real vs Orçado - {mes_vigente_sel}",
+                f"Real vs Orçado - {mes_bridge_escolhido}",
                 "Real",
-                mes_vigente_idx,
-                mes_vigente_idx + 1,
+                idx_bridge,
+                idx_bridge + 1,
                 chave_just_mes
             ),
             use_container_width=True
@@ -950,10 +965,10 @@ with tab2:
     with b_tab2:
         st.plotly_chart(
             gerar_waterfall_fpna(
-                f"Real vs Orçado - YTD (Janeiro a {mes_vigente_sel})",
+                f"Real vs Orçado - YTD (Janeiro a {mes_bridge_escolhido})",
                 "Real YTD",
                 0,
-                mes_vigente_idx + 1,
+                idx_bridge + 1,
                 chave_just_ytd
             ),
             use_container_width=True
@@ -982,27 +997,27 @@ with tab2:
     
     with col_reg1:
         st.markdown("##### 1. Registrar Fechamento Oficial do Mês")
-        st.caption(f"Grava um screenshot/snapshot permanente dos dados realizados e justificativas de **{mes_vigente_sel}** para consulta histórica na Aba 3.")
-        if st.button(f"🔒 Gravar Fechamento Oficial de {mes_vigente_sel}", type="primary"):
+        st.caption(f"Grava um snapshot permanente dos dados realizados e justificativas de **{mes_bridge_escolhido}** para consulta histórica na Aba 3.")
+        if st.button(f"🔒 Gravar Fechamento Oficial de {mes_bridge_escolhido}", type="primary"):
             dados_fechamento = {
-                "mes": mes_vigente_sel,
+                "mes": mes_bridge_escolhido,
                 "data_fechamento": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                "vol_pb": float(vol_pb_arr[mes_vigente_idx]),
-                "vol_real": float(vol_real_rf_arr[mes_vigente_idx]),
-                "unitario_pb": {k: float(v[mes_vigente_idx]) for k, v in unitario_pb.items()},
-                "unitario_real": {k: float(v[mes_vigente_idx]) for k, v in unitario_real_rf.items()},
-                "montante_pb": {k: float(v[mes_vigente_idx]) for k, v in montante_pb.items()},
-                "montante_real": {k: float(v[mes_vigente_idx]) for k, v in montante_real_rf.items()},
+                "vol_pb": float(vol_pb_arr[idx_bridge]),
+                "vol_real": float(vol_real_rf_arr[idx_bridge]),
+                "unitario_pb": {k: float(v[idx_bridge]) for k, v in unitario_pb.items()},
+                "unitario_real": {k: float(v[idx_bridge]) for k, v in unitario_real_rf.items()},
+                "montante_pb": {k: float(v[idx_bridge]) for k, v in montante_pb.items()},
+                "montante_real": {k: float(v[idx_bridge]) for k, v in montante_real_rf.items()},
                 "justificativas": st.session_state.justificativas.get(chave_just_mes, {})
             }
-            st.session_state.fechamentos_mes[mes_vigente_sel] = dados_fechamento
+            st.session_state.fechamentos_mes[mes_bridge_escolhido] = dados_fechamento
             salvar_json(FILE_FECHAMENTOS_MES, st.session_state.fechamentos_mes)
-            st.success(f"✅ Fechamento de {mes_vigente_sel} gravado com sucesso! Consulte-o na Aba 3.")
+            st.success(f"✅ Fechamento de {mes_bridge_escolhido} gravado com sucesso! Consulte-o na Aba 3.")
             st.rerun()
 
     with col_reg2:
         st.markdown("##### 2. Congelar Relatório de Rolling Forecast (RFX)")
-        sugestao_nome = f"RF{mes_vigente_idx + 1:02d}"
+        sugestao_nome = f"RF{idx_bridge + 1:02d}"
         col_n, col_b = st.columns([2, 1])
         with col_n:
             nome_versao_rfx = st.text_input("Código do RF:", value=sugestao_nome, help="Exemplo: RF03, RF06, RF09")
@@ -1012,7 +1027,7 @@ with tab2:
             if st.button("💾 Congelar RFX"):
                 dados_congelados = {
                     "data_gravacao": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                    "mes_corte": mes_vigente_sel,
+                    "mes_corte": mes_bridge_escolhido,
                     "vol_pb": list(vol_pb_arr),
                     "vol_real_rf": list(vol_real_rf_arr),
                     "unitario_pb": {k: list(v) for k, v in unitario_pb.items()},
