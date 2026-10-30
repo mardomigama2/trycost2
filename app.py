@@ -36,7 +36,7 @@ def salvar_json(caminho, dados):
         st.error(f"Erro ao salvar dados locais: {e}")
 
 # =========================================================
-# FUNÇÕES DE FORMATAÇÃO PT-BR (PONTO MILHAR, VÍRGULA DECIMAL)
+# FUNÇÕES DE FORMATAÇÃO PT-BR
 # =========================================================
 def fmt_moeda_br(v):
     if pd.isna(v) or v is None:
@@ -59,13 +59,13 @@ def fmt_pct_br(v):
     return f"{v:.2f}%".replace(".", ",")
 
 # =========================================================
-# INICIALIZAÇÃO DE DADOS NA SESSÃO
+# INICIALIZAÇÃO DE DADOS
 # =========================================================
 default_fornec = [
-    {"Fornecedor": "VLI", "Tipo": "Tarifa (R$/t)", "Valor_Base": 113.40, "Gatilho_Mensal": "Diesel", "Mes_Aniv": 6, "Indice_Aniv": "IPCA"},
-    {"Fornecedor": "FTL", "Tipo": "Tarifa (R$/t)", "Valor_Base": 17.80, "Gatilho_Mensal": "Diesel", "Mes_Aniv": 9, "Indice_Aniv": "IPCA"},
-    {"Fornecedor": "ASG G5", "Tipo": "Fixo (R$)", "Valor_Base": 104040.00, "Gatilho_Mensal": "Nenhum", "Mes_Aniv": 5, "Indice_Aniv": "INPC"},
-    {"Fornecedor": "Manutenção VLI", "Tipo": "Fixo (R$)", "Valor_Base": 167200.00, "Gatilho_Mensal": "Nenhum", "Mes_Aniv": 6, "Indice_Aniv": "IPCA"}
+    {"Fornecedor": "VLI", "Tipo": "Tarifa (R$/t)", "Valor_Base": 113.40, "Gatilho_Mensal": "Diesel", "Mes_Inicio": 1, "Mes_Aniv": 6, "Indice_Aniv": "IPCA"},
+    {"Fornecedor": "FTL", "Tipo": "Tarifa (R$/t)", "Valor_Base": 17.80, "Gatilho_Mensal": "Diesel", "Mes_Inicio": 1, "Mes_Aniv": 9, "Indice_Aniv": "IPCA"},
+    {"Fornecedor": "ASG G5", "Tipo": "Fixo (R$)", "Valor_Base": 104040.00, "Gatilho_Mensal": "Nenhum", "Mes_Inicio": 1, "Mes_Aniv": 5, "Indice_Aniv": "INPC"},
+    {"Fornecedor": "Manutenção VLI", "Tipo": "Fixo (R$)", "Valor_Base": 167200.00, "Gatilho_Mensal": "Nenhum", "Mes_Inicio": 1, "Mes_Aniv": 6, "Indice_Aniv": "IPCA"}
 ]
 default_vol_pb = [151923, 122844, 88439, 136974, 136854, 118845, 138754, 146088, 139023, 147327, 139805, 142788]
 
@@ -107,22 +107,22 @@ with tab1:
         st.info(f"📅 **Mês Atual do Calendário:** {MESES[mes_atual_sistema]}")
     with col_st2:
         mes_vigente_sel = st.selectbox(
-            "Selecione o Mês Vigente de Acompanhamento:",
+            "Selecione o Mês Vigente Operacional:",
             MESES,
             index=mes_atual_sistema,
-            help="Colunas verdes = Realizados (anteriores). Coluna azul = Mês vigente."
+            help="O valor base cadastrado será aplicado neste mês. Meses anteriores ficam em verde (Realizados) e posteriores recebem a projeção encadeada."
         )
     mes_vigente_idx = MESES.index(mes_vigente_sel)
 
-    # Função de estilização para volumes (Verde, Azul e Vermelho para Real+RF < PB)
+    # Estilização de Volumes
     def estilizar_tabela_volume(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
         for i, col in enumerate(MESES):
             bg = ""
             if i < mes_vigente_idx:
-                bg = "background-color: #E8F5E9;"  # Verde claro
+                bg = "background-color: #E8F5E9;"
             elif i == mes_vigente_idx:
-                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
+                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"
             
             for idx in df.index:
                 cell_style = bg
@@ -130,11 +130,10 @@ with tab1:
                     v_rf = df.loc["Volume Real+RF", col]
                     v_pb = df.loc["Volume PB", col]
                     if pd.notna(v_rf) and pd.notna(v_pb) and float(v_rf) < float(v_pb):
-                        cell_style += " color: #D32F2F; font-weight: bold;"  # Vermelho se Real+RF < PB
+                        cell_style += " color: #D32F2F; font-weight: bold;"
                 styles.loc[idx, col] = cell_style
         return styles
 
-    # Painel comparativo de volume
     st.subheader("Painel Comparativo de Volumes (t)")
     st.caption("🔴 *Números em vermelho indicam que o Volume Real+RF está abaixo do PB orçado.*")
     df_vol_comp = pd.DataFrame(
@@ -147,17 +146,15 @@ with tab1:
         use_container_width=True
     )
 
-    # Bloco para Edição do Volume Real + RF
     with st.expander("✏️ Editar / Colar Volumes Real+RF", expanded=False):
         df_edit_rf = pd.DataFrame([st.session_state.vol_real_rf], columns=MESES, index=["Volume Real+RF"])
         res_v_rf = st.data_editor(df_edit_rf, key="editor_vol_rf_key", use_container_width=True)
         if st.button("💾 Salvar Novo Volume Real+RF"):
             st.session_state.vol_real_rf = [float(res_v_rf.iloc[0, i]) for i in range(12)]
             salvar_json(FILE_VOLUMES, {"pb": st.session_state.vol_pb, "real_rf": st.session_state.vol_real_rf})
-            st.success("Volumes Real+RF salvos com sucesso!")
+            st.success("Volumes Real+RF salvos!")
             st.rerun()
 
-    # Bloco para Edição do Volume PB (Com Senha)
     with st.expander("🔒 Desbloquear Volume PB (Senha: mudar123)", expanded=False):
         if not st.session_state.pb_desbloqueado:
             col_pwd, col_btn = st.columns([3, 1])
@@ -183,7 +180,7 @@ with tab1:
                     if len(nums) == 12:
                         st.session_state.vol_pb = [float(x) for x in nums]
                         salvar_json(FILE_VOLUMES, {"pb": st.session_state.vol_pb, "real_rf": st.session_state.vol_real_rf})
-                        st.success("PB importado com sucesso!")
+                        st.success("PB importado!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
             
@@ -204,10 +201,8 @@ with tab1:
 
     st.markdown("---")
     
-    # 2. Premissas Macroeconômicas com Cores (Verde/Azul)
+    # 2. Premissas Macroeconômicas
     st.header("2. Índices Macroeconômicos (% ao mês)")
-    
-    # Transposta para visualização com meses nas colunas
     df_ind_exib = st.session_state.indices.set_index("Mês").T
 
     def estilizar_indices(df):
@@ -215,9 +210,9 @@ with tab1:
         for i, col in enumerate(MESES):
             if col in styles.columns:
                 if i < mes_vigente_idx:
-                    styles[col] = "background-color: #E8F5E9;"  # Verde claro
+                    styles[col] = "background-color: #E8F5E9;"
                 elif i == mes_vigente_idx:
-                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
+                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"
         return styles
 
     st.dataframe(
@@ -236,15 +231,18 @@ with tab1:
         if st.button("💾 Salvar Índices"):
             st.session_state.indices = edit_ind
             salvar_json(FILE_INDICES, edit_ind.to_dict(orient="list"))
-            st.success("Índices salvos com sucesso!")
+            st.success("Índices salvos!")
             st.rerun()
 
     st.markdown("---")
     
-    # 3. Fornecedores com Salvamento Automático Permanente
+    # 3. Cadastro de Fornecedores
     st.header("3. Cadastro de Fornecedores & Paramétricas")
-    st.caption("ℹ️ Clique no botão '+' na tabela para incluir novos fornecedores. Ao clicar em 'Salvar Fornecedores', os dados ficam gravados permanentemente.")
+    st.caption("ℹ️ O campo **Mês Início (1 a 12)** define quando o fornecedor entra em operação. O **Valor Base** é o valor já fechado do **Mês Vigente**.")
     
+    if "Mes_Inicio" not in st.session_state.fornecedores.columns:
+        st.session_state.fornecedores["Mes_Inicio"] = 1
+
     edit_fornec = st.data_editor(
         st.session_state.fornecedores,
         num_rows="dynamic",
@@ -252,7 +250,8 @@ with tab1:
         column_config={
             "Fornecedor": st.column_config.TextColumn("Fornecedor", required=True),
             "Tipo": st.column_config.SelectboxColumn("Tipo de Custo", options=["Tarifa (R$/t)", "Fixo (R$)"], required=True),
-            "Valor_Base": st.column_config.NumberColumn("Valor Base (R$)", step=0.1, required=True),
+            "Valor_Base": st.column_config.NumberColumn("Valor Base Mês Vigente (R$)", step=0.1, required=True),
+            "Mes_Inicio": st.column_config.NumberColumn("Mês Início (1-12)", min_value=1, max_value=12, step=1, default=1),
             "Gatilho_Mensal": st.column_config.SelectboxColumn("Gatilho Mensal", options=["Nenhum", "Diesel", "IPCA", "INPC", "IGPM"]),
             "Mes_Aniv": st.column_config.NumberColumn("Mês Aniv. (1-12)", min_value=1, max_value=12, step=1),
             "Indice_Aniv": st.column_config.SelectboxColumn("Índice Aniversário", options=["Nenhum", "IPCA", "INPC", "IGPM"])
@@ -263,12 +262,12 @@ with tab1:
     if st.button("💾 Salvar Cadastro de Fornecedores", type="primary"):
         st.session_state.fornecedores = edit_fornec
         salvar_json(FILE_FORNECEDORES, edit_fornec.to_dict(orient="records"))
-        st.success("Fornecedores salvos com sucesso no sistema!")
+        st.success("Fornecedores salvos com sucesso!")
         st.rerun()
 
 
 # =========================================================
-# MOTOR DE CÁLCULO
+# MOTOR DE CÁLCULO DINÂMICO
 # =========================================================
 vol_pb_arr = np.array(st.session_state.vol_pb, dtype=float)
 vol_real_rf_arr = np.array(st.session_state.vol_real_rf, dtype=float)
@@ -277,7 +276,7 @@ df_ind = st.session_state.indices
 diesel_taxa = df_ind["Diesel_%"].values / 100.0
 ipca_taxa = df_ind["IPCA_%"].values / 100.0
 inpc_taxa = df_ind["INPC_%"].values / 100.0
-fator_diesel = np.cumprod(1.0 + diesel_taxa)
+igpm_taxa = df_ind["IGPM_%"].values / 100.0
 
 montante_pb = {}
 montante_real_rf_calculado = {}
@@ -292,6 +291,10 @@ for _, row in st.session_state.fornecedores.iterrows():
     base = float(row.get("Valor_Base", 0.0))
     gatilho = str(row.get("Gatilho_Mensal", "Nenhum"))
     
+    # Mês de início de operação
+    mes_inicio_raw = row.get("Mes_Inicio", 1)
+    m_inicio = (int(mes_inicio_raw) - 1) if pd.notna(mes_inicio_raw) and mes_inicio_raw > 0 else 0
+
     mes_aniv_raw = row.get("Mes_Aniv")
     m_aniv = (int(mes_aniv_raw) - 1) if pd.notna(mes_aniv_raw) and mes_aniv_raw > 0 else 99
     idx_aniv = str(row.get("Indice_Aniv", "Nenhum"))
@@ -302,31 +305,60 @@ for _, row in st.session_state.fornecedores.iterrows():
     elif idx_aniv == "INPC":
         taxa_aniv = np.sum(inpc_taxa)
     elif idx_aniv == "IGPM":
-        taxa_aniv = np.sum(df_ind["IGPM_%"].values / 100.0)
+        taxa_aniv = np.sum(igpm_taxa)
 
-    # 1. PB Base
-    if tipo == "Tarifa (R$/t)":
-        m_pb = base * vol_pb_arr
-        u_pb = np.full(12, base)
-    else:
-        m_pb = np.full(12, base)
-        u_pb = np.where(vol_pb_arr > 0, m_pb / vol_pb_arr, 0.0)
+    # 1. PB Base (Considera o fornecedor ativo a partir de m_inicio)
+    m_pb = np.zeros(12)
+    u_pb = np.zeros(12)
+    for m in range(12):
+        if m >= m_inicio:
+            if tipo == "Tarifa (R$/t)":
+                m_pb[m] = base * vol_pb_arr[m]
+                u_pb[m] = base
+            else:
+                m_pb[m] = base
+                u_pb[m] = base / vol_pb_arr[m] if vol_pb_arr[m] > 0 else 0.0
 
     montante_pb[nome] = m_pb
     unitario_pb[nome] = u_pb
 
-    # 2. Projeção Base Real+RF (mudança na base só incide do mês vigente em diante)
+    # 2. Real+RF Encadeado:
+    # - Mês vigente (mes_vigente_idx): assume exatamente o Valor_Base (já inclui tudo!).
+    # - Meses anteriores: mantêm o valor base original (ou dados imputados manualmente).
+    # - Meses posteriores: calculados mês a mês com variação de diesel e aniversário de contrato.
     m_calc = np.zeros(12)
-    for m in range(12):
-        fator_g = fator_diesel[m] if gatilho == "Diesel" else 1.0
-        fator_a = (1.0 + taxa_aniv) if m >= m_aniv else 1.0
+    u_calc = np.zeros(12)
+    
+    # Preenche meses até o mês vigente
+    for m in range(mes_vigente_idx + 1):
+        if m >= m_inicio:
+            if tipo == "Tarifa (R$/t)":
+                u_calc[m] = base
+                m_calc[m] = base * vol_real_rf_arr[m]
+            else:
+                m_calc[m] = base
+                u_calc[m] = base / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+
+    # Encadeamento para os meses seguintes (m > mes_vigente_idx)
+    for m in range(mes_vigente_idx + 1, 12):
+        if m < m_inicio:
+            continue
+        
+        # Variação do diesel do mês anterior para o atual
+        var_mensal = (1.0 + diesel_taxa[m]) if gatilho == "Diesel" else 1.0
+        # Reajuste pontual no mês de aniversário
+        var_aniv = (1.0 + taxa_aniv) if m == m_aniv else 1.0
         
         if tipo == "Tarifa (R$/t)":
-            tarifa_m = base * fator_g * fator_a
+            tarifa_ant = u_calc[m - 1] if m - 1 >= m_inicio else base
+            tarifa_m = tarifa_ant * var_mensal * var_aniv
+            u_calc[m] = tarifa_m
             m_calc[m] = tarifa_m * vol_real_rf_arr[m]
         else:
-            custo_fixo_m = base * fator_a
-            m_calc[m] = custo_fixo_m
+            custo_ant = m_calc[m - 1] if m - 1 >= m_inicio else base
+            custo_m = custo_ant * var_aniv
+            m_calc[m] = custo_m
+            u_calc[m] = custo_m / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
 
     montante_real_rf_calculado[nome] = m_calc
 
@@ -347,9 +379,8 @@ with tab2:
         unsafe_allow_html=True
     )
 
-    # Editor de valores de Real+RF
     with st.expander("✏️ Clique aqui para imputar / ajustar valores mensais de Real+RF por fornecedor", expanded=False):
-        st.caption("Você pode alterar os valores realizados ou previsões específicas de cada mês. Os dados serão salvos permanentemente.")
+        st.caption("Você pode ajustar os valores de cada mês livremente. Ao salvar, as alterações ficam gravadas permanentemente.")
         df_editor_input = pd.DataFrame(index=list(montante_pb.keys()), columns=MESES)
         for f in montante_pb.keys():
             if f in st.session_state.matriz_real_rf_custom:
@@ -366,7 +397,7 @@ with tab2:
             st.success("Valores salvos com sucesso!")
             st.rerun()
 
-    # Montagem final dos montantes
+    # Montagem consolidada
     montante_real_rf = {}
     unitario_real_rf = {}
     for f in montante_pb.keys():
@@ -378,31 +409,27 @@ with tab2:
         montante_real_rf[f] = m_rf_val
         unitario_real_rf[f] = np.where(vol_real_rf_arr > 0, m_rf_val / vol_real_rf_arr, 0.0)
 
-    # Totais consolidados
     total_m_pb = sum(montante_pb.values())
     total_m_real_rf = sum(montante_real_rf.values())
     total_u_pb = np.where(vol_pb_arr > 0, total_m_pb / vol_pb_arr, 0.0)
     total_u_real_rf = np.where(vol_real_rf_arr > 0, total_m_real_rf / vol_real_rf_arr, 0.0)
 
-    # Ordenação das linhas
     ordem_linhas = ["TOTAL PB", "TOTAL Real+RF"]
     for f in montante_pb.keys():
         ordem_linhas.append(f"{f} (PB)")
         ordem_linhas.append(f"{f} (Real+RF)")
 
-    # Função de estilização para Custos (Verde passado, Azul vigente, Vermelho se Real+RF > PB)
     def estilizar_tabela_custos(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
         for i, col in enumerate(MESES):
             bg = ""
             if i < mes_vigente_idx:
-                bg = "background-color: #E8F5E9;"  # Verde claro
+                bg = "background-color: #E8F5E9;"
             elif i == mes_vigente_idx:
-                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
+                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"
             
             for idx in df.index:
                 cell_style = bg
-                # Verifica estouro de custo (Real+RF > PB)
                 if "(Real+RF)" in idx:
                     idx_pb = idx.replace(" (Real+RF)", " (PB)")
                     if idx_pb in df.index and float(df.loc[idx, col]) > float(df.loc[idx_pb, col]):
@@ -414,33 +441,14 @@ with tab2:
                 styles.loc[idx, col] = cell_style
         return styles
 
-    # 1. Tabela Montante (R$)
-    st.subheader("1. Tabela Comparativa em Montante (R$)")
-    dados_m = {}
-    for l in ordem_linhas:
-        if l == "TOTAL PB":
-            dados_m[l] = list(total_m_pb) + [sum(total_m_pb)]
-        elif l == "TOTAL Real+RF":
-            dados_m[l] = list(total_m_real_rf) + [sum(total_m_real_rf)]
-        elif "(PB)" in l:
-            fn = l.replace(" (PB)", "")
-            dados_m[l] = list(montante_pb[fn]) + [sum(montante_pb[fn])]
-        elif "(Real+RF)" in l:
-            fn = l.replace(" (Real+RF)", "")
-            dados_m[l] = list(montante_real_rf[fn]) + [sum(montante_real_rf[fn])]
-
-    df_tabela_m = pd.DataFrame.from_dict(dados_m, orient="index", columns=MESES + ["Total Ano"])
-    st.dataframe(
-        df_tabela_m.style.apply(estilizar_tabela_custos, axis=None).format(fmt_moeda_br),
-        use_container_width=True
-    )
-
-    # 2. Tabela Unitário (R$/t)
-    st.subheader("2. Tabela Comparativa em Unitário (R$/t)")
-    dados_u = {}
     sum_vol_pb = sum(vol_pb_arr)
     sum_vol_rf = sum(vol_real_rf_arr)
 
+    # -------------------------------------------------------------
+    # 1. TABELA DE CUSTO UNITÁRIO (PRIMEIRO)
+    # -------------------------------------------------------------
+    st.subheader("1. Tabela Comparativa em Unitário (R$/t)")
+    dados_u = {}
     for l in ordem_linhas:
         if l == "TOTAL PB":
             media = sum(total_m_pb) / sum_vol_pb if sum_vol_pb > 0 else 0.0
@@ -463,9 +471,34 @@ with tab2:
         use_container_width=True
     )
 
+    # -------------------------------------------------------------
+    # 2. TABELA DE MONTANTE (DEPOIS)
+    # -------------------------------------------------------------
+    st.subheader("2. Tabela Comparativa em Montante (R$)")
+    dados_m = {}
+    for l in ordem_linhas:
+        if l == "TOTAL PB":
+            dados_m[l] = list(total_m_pb) + [sum(total_m_pb)]
+        elif l == "TOTAL Real+RF":
+            dados_m[l] = list(total_m_real_rf) + [sum(total_m_real_rf)]
+        elif "(PB)" in l:
+            fn = l.replace(" (PB)", "")
+            dados_m[l] = list(montante_pb[fn]) + [sum(montante_pb[fn])]
+        elif "(Real+RF)" in l:
+            fn = l.replace(" (Real+RF)", "")
+            dados_m[l] = list(montante_real_rf[fn]) + [sum(montante_real_rf[fn])]
+
+    df_tabela_m = pd.DataFrame.from_dict(dados_m, orient="index", columns=MESES + ["Total Ano"])
+    st.dataframe(
+        df_tabela_m.style.apply(estilizar_tabela_custos, axis=None).format(fmt_moeda_br),
+        use_container_width=True
+    )
+
     st.markdown("---")
     
-    # 3. Bridges Waterfall
+    # -------------------------------------------------------------
+    # 3. BRIDGES WATERFALL
+    # -------------------------------------------------------------
     st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
     def gerar_waterfall(titulo, start_idx, end_idx):
