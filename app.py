@@ -20,6 +20,8 @@ FILE_INDICES = "dados_indices.json"
 FILE_CUSTOM_RF = "dados_custom_rf.json"
 FILE_PB_FORNECEDORES = "dados_pb_fornecedores.json"
 FILE_HISTORICO_RFX = "historico_rfx.json"
+FILE_JUSTIFICATIVAS = "dados_justificativas.json"
+FILE_FECHAMENTOS_MES = "fechamentos_mensais.json"
 
 def carregar_json(caminho, default):
     if os.path.exists(caminho):
@@ -106,17 +108,23 @@ if "pb_fornecedores" not in st.session_state:
 if "historico_rfx" not in st.session_state:
     st.session_state.historico_rfx = carregar_json(FILE_HISTORICO_RFX, {})
 
+if "justificativas" not in st.session_state:
+    st.session_state.justificativas = carregar_json(FILE_JUSTIFICATIVAS, {})
+
+if "fechamentos_mes" not in st.session_state:
+    st.session_state.fechamentos_mes = carregar_json(FILE_FECHAMENTOS_MES, {})
+
 if "pb_vol_desbloqueado" not in st.session_state:
     st.session_state.pb_vol_desbloqueado = False
 
 if "pb_fornec_desbloqueado" not in st.session_state:
     st.session_state.pb_fornec_desbloqueado = False
 
-# Três Abas de Trabalho
+# Abas de Trabalho
 tab1, tab2, tab3 = st.tabs([
     "⚙️ Aba 1: Inputs & Premissas Base",
-    "📊 Aba 2: Controle & Resultados",
-    "📚 Aba 3: Histórico de Versões (RFX)"
+    "📊 Aba 2: Controle & Bridges",
+    "📚 Aba 3: Histórico de Versões (RFX & Fechamentos)"
 ])
 
 # =========================================================
@@ -142,9 +150,9 @@ with tab1:
         for i, col in enumerate(MESES):
             if col in styles.columns:
                 if i < mes_vigente_idx:
-                    styles[col] = "background-color: #E8F5E9;"
+                    styles[col] = "background-color: #E8F5E9;"  # Verde claro
                 elif i == mes_vigente_idx:
-                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"
+                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
         return styles
 
     def estilizar_tabela_volume(df):
@@ -508,9 +516,9 @@ def estilizar_tabela_custos(df):
     for i, col in enumerate(MESES):
         bg = ""
         if i < mes_vigente_idx:
-            bg = "background-color: #E8F5E9;"
+            bg = "background-color: #E8F5E9;"  # Verde claro
         elif i == mes_vigente_idx:
-            bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"
+            bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
         
         for idx in df.index:
             cell_style = bg
@@ -645,11 +653,49 @@ with tab2:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 3. BRIDGES WATERFALL
+    # 3. BRIDGES WATERFALL COM SETA E PLACAS DE JUSTIFICATIVAS
     # -------------------------------------------------------------
     st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
-    def gerar_waterfall(titulo, start_idx, end_idx, m_pb_dict, m_rf_dict, v_pb_arr, v_rf_arr):
+    # Recupera justificativas salvas para o mês vigente
+    chave_mes_just = mes_vigente_sel
+    if chave_mes_just not in st.session_state.justificativas:
+        st.session_state.justificativas[chave_mes_just] = {f: "" for f in todos_fornecedores_ordenados}
+
+    # Painel para registrar / editar justificativas
+    with st.expander(f"📝 Registro de Justificativas das Variações ({mes_vigente_sel})", expanded=False):
+        st.caption("Insira os motivos dos estouros ou savings de cada fornecedor. Elas aparecerão como plaquinhas acima das barras e ficarão gravadas no histórico.")
+        just_dict = st.session_state.justificativas[chave_mes_just]
+        
+        df_just_input = pd.DataFrame({
+            "Fornecedor": todos_fornecedores_ordenados,
+            "PB (R$/t)": [unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados],
+            "Real (R$/t)": [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados],
+            "Desvio (R$/t)": [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] - unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados],
+            "Justificativa": [just_dict.get(f, "") for f in todos_fornecedores_ordenados]
+        })
+        
+        edit_just = st.data_editor(
+            df_just_input,
+            use_container_width=True,
+            disabled=["Fornecedor", "PB (R$/t)", "Real (R$/t)", "Desvio (R$/t)"],
+            column_config={
+                "PB (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Real (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Desvio (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Justificativa": st.column_config.TextColumn("Justificativa Executiva", width="large")
+            },
+            key="editor_just_key"
+        )
+        
+        if st.button("💾 Salvar Justificativas"):
+            for _, r in edit_just.iterrows():
+                st.session_state.justificativas[chave_mes_just][r["Fornecedor"]] = str(r["Justificativa"]).strip()
+            salvar_json(FILE_JUSTIFICATIVAS, st.session_state.justificativas)
+            st.success("Justificativas salvas com sucesso!")
+            st.rerun()
+
+    def gerar_waterfall(titulo, label_final, start_idx, end_idx, m_pb_dict, m_rf_dict, v_pb_arr, v_rf_arr, mostrar_justificativas=False):
         v_pb = v_pb_arr[start_idx:end_idx].sum()
         v_rf = v_rf_arr[start_idx:end_idx].sum()
         
@@ -658,11 +704,14 @@ with tab2:
 
         u_pb_tot = tot_pb / v_pb if v_pb > 0 else 0.0
         u_rf_tot = tot_rf / v_rf if v_rf > 0 else 0.0
+        pct_delta_total = ((u_rf_tot / u_pb_tot) - 1) * 100 if u_pb_tot > 0 else 0.0
 
-        x = ["PB Base"]
+        # Primeira coluna: SEMPRE "PB"
+        x = ["PB"]
         y = [u_pb_tot]
         measures = ["absolute"]
 
+        deltas_fornec = []
         for f in todos_fornecedores_ordenados:
             m_f_pb = m_pb_dict.get(f, np.zeros(12))[start_idx:end_idx].sum()
             m_f_rf = m_rf_dict.get(f, np.zeros(12))[start_idx:end_idx].sum()
@@ -673,9 +722,11 @@ with tab2:
             
             x.append(f)
             y.append(delta)
+            deltas_fornec.append(delta)
             measures.append("relative")
 
-        x.append("Real+RF Final")
+        # Coluna final: "Real", "Real YTD" ou "Real+RF"
+        x.append(label_final)
         y.append(0)
         measures.append("total")
 
@@ -695,17 +746,78 @@ with tab2:
             textposition="outside",
             text=textos,
             y=y,
-            connector={"line": {"color": "#666"}},
+            connector={"line": {"color": "#666", "width": 1.5}},
             increasing={"marker": {"color": "#E53935"}},
             decreasing={"marker": {"color": "#43A047"}},
             totals={"marker": {"color": "#1E88E5"}}
         ))
+
+        # SETA CONECTANDO A COLUNA DO PB COM A COLUNA FINAL MOSTRANDO O %
+        cor_seta = "#D32F2F" if pct_delta_total > 0 else "#2E7D32"
+        sinal_seta = "+" if pct_delta_total > 0 else ""
+        texto_seta = f"<b>{sinal_seta}{pct_delta_total:.2f}%</b>".replace(".", ",")
+
+        # Ponto de topo para a curvatura da seta
+        max_y = max(u_pb_tot, u_rf_tot) * 1.08
+
+        fig.add_annotation(
+            x=x[-1],
+            y=u_rf_tot,
+            ax=x[0],
+            ay=u_pb_tot,
+            xref="x", yref="y",
+            axref="x", ayref="y",
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1.2,
+            arrowwidth=2.5,
+            arrowcolor=cor_seta,
+            text=f"Variação Total: {texto_seta}",
+            font=dict(size=12, color=cor_seta),
+            bgcolor="rgba(255, 255, 255, 0.95)",
+            bordercolor=cor_seta,
+            borderwidth=1.5,
+            borderpad=4
+        )
+
+        # PLAQUINHAS COM JUSTIFICATIVAS SOBRE AS BARRINHAS
+        if mostrar_justificativas and chave_mes_just in st.session_state.justificativas:
+            just_map = st.session_state.justificativas[chave_mes_just]
+            
+            # Calcula posições cumulativas para posicionar a plaquinha
+            acumulado = u_pb_tot
+            for i, f in enumerate(todos_fornecedores_ordenados):
+                delta_val = deltas_fornec[i]
+                acumulado_anterior = acumulado
+                acumulado += delta_val
+                
+                texto_just = just_map.get(f, "").strip()
+                if texto_just and abs(delta_val) > 0.001:
+                    y_pos = max(acumulado_anterior, acumulado) + (max(u_pb_tot, u_rf_tot) * 0.02)
+                    cor_badge = "#FFEBEE" if delta_val > 0 else "#E8F5E9"
+                    cor_borda = "#D32F2F" if delta_val > 0 else "#2E7D32"
+                    
+                    fig.add_annotation(
+                        x=f,
+                        y=y_pos,
+                        text=f"💬 <i>{texto_just}</i>",
+                        showarrow=False,
+                        font=dict(size=10, color="#1A237E"),
+                        bgcolor=cor_badge,
+                        bordercolor=cor_borda,
+                        borderwidth=1,
+                        borderpad=3,
+                        yshift=18
+                    )
+
+        # Ajuste de layout com folga vertical para a seta e plaquinhas
         fig.update_layout(
             title=titulo,
             yaxis_title="R$/t",
             waterfallgap=0.3,
-            height=430,
-            margin=dict(l=30, r=30, t=50, b=30)
+            height=480,
+            yaxis=dict(range=[0, max_y * 1.15]),
+            margin=dict(l=30, r=30, t=60, b=40)
         )
         return fig
 
@@ -716,185 +828,237 @@ with tab2:
     ])
 
     with b_tab1:
-        st.plotly_chart(gerar_waterfall(f"Bridge Unitário: Mês de {mes_vigente_sel} (PB vs Real+RF)", mes_vigente_idx, mes_vigente_idx + 1, montante_pb, montante_real_rf, vol_pb_arr, vol_real_rf_arr), use_container_width=True)
+        st.plotly_chart(
+            gerar_waterfall(
+                f"Bridge Unitário: Mês de {mes_vigente_sel} (PB vs Real)",
+                "Real",
+                mes_vigente_idx,
+                mes_vigente_idx + 1,
+                montante_pb,
+                montante_real_rf,
+                vol_pb_arr,
+                vol_real_rf_arr,
+                mostrar_justificativas=True
+            ),
+            use_container_width=True
+        )
 
     with b_tab2:
-        st.plotly_chart(gerar_waterfall(f"Bridge Unitário YTD: Janeiro a {mes_vigente_sel} (PB vs Real+RF)", 0, mes_vigente_idx + 1, montante_pb, montante_real_rf, vol_pb_arr, vol_real_rf_arr), use_container_width=True)
+        st.plotly_chart(
+            gerar_waterfall(
+                f"Bridge Unitário YTD: Janeiro a {mes_vigente_sel} (PB vs Real YTD)",
+                "Real YTD",
+                0,
+                mes_vigente_idx + 1,
+                montante_pb,
+                montante_real_rf,
+                vol_pb_arr,
+                vol_real_rf_arr,
+                mostrar_justificativas=False
+            ),
+            use_container_width=True
+        )
 
     with b_tab3:
-        st.plotly_chart(gerar_waterfall("Bridge Unitário Full Year: Jan a Dez (PB vs Real+RF)", 0, 12, montante_pb, montante_real_rf, vol_pb_arr, vol_real_rf_arr), use_container_width=True)
+        st.plotly_chart(
+            gerar_waterfall(
+                "Bridge Unitário Full Year: Jan a Dez (PB vs Real+RF)",
+                "Real+RF",
+                0,
+                12,
+                montante_pb,
+                montante_real_rf,
+                vol_pb_arr,
+                vol_real_rf_arr,
+                mostrar_justificativas=False
+            ),
+            use_container_width=True
+        )
 
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 4. BOTÃO PARA CONGELAR E SALVAR A PROJEÇÃO RFX
+    # 4. BOTÕES DE REGISTRO OFICIAL (FECHAMENTO DO MÊS E RFX)
     # -------------------------------------------------------------
-    st.subheader("📸 Salvar Versão Oficial de Rolling Forecast (RFX)")
-    st.caption("Grave o cenário atual como uma versão histórica oficial (ex.: RF03, RF06, RF09) para consultas e apresentações à diretoria na Aba 3.")
+    st.subheader("📸 Registros Oficiais (Snapshot / Fechamento)")
     
-    col_rf_nome, col_rf_btn = st.columns([2, 2])
-    with col_rf_nome:
-        sugestao_nome = f"RF{mes_vigente_idx + 1:02d}"
-        nome_versao_rfx = st.text_input("Nome da Versão:", value=sugestao_nome, help="Exemplo: RF03, RF06, RF09")
-    with col_rf_btn:
-        st.write("")
-        st.write("")
-        if st.button("💾 Congelar e Salvar Versão RFX", type="primary"):
-            dados_congelados = {
-                "data_gravacao": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                "mes_corte": mes_vigente_sel,
-                "vol_pb": list(vol_pb_arr),
-                "vol_real_rf": list(vol_real_rf_arr),
-                "unitario_pb": {k: list(v) for k, v in unitario_pb.items()},
-                "unitario_real_rf": {k: list(v) for k, v in unitario_real_rf.items()},
-                "montante_pb": {k: list(v) for k, v in montante_pb.items()},
-                "montante_real_rf": {k: list(v) for k, v in montante_real_rf.items()}
+    col_reg1, col_reg2 = st.columns(2)
+    
+    # Opção A: Fechamento do Mês
+    with col_reg1:
+        st.markdown("##### 1. Registrar Fechamento do Mês Vigente")
+        st.caption(f"Grava um screenshot/snapshot dos dados realizados e justificativas do mês de **{mes_vigente_sel}** para auditoria e histórico.")
+        if st.button(f"🔒 Gravar Fechamento Oficial de {mes_vigente_sel}", type="primary"):
+            dados_fechamento = {
+                "mes": mes_vigente_sel,
+                "data_fechamento": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "vol_pb": float(vol_pb_arr[mes_vigente_idx]),
+                "vol_real": float(vol_real_rf_arr[mes_vigente_idx]),
+                "unitario_pb": {k: float(v[mes_vigente_idx]) for k, v in unitario_pb.items()},
+                "unitario_real": {k: float(v[mes_vigente_idx]) for k, v in unitario_real_rf.items()},
+                "montante_pb": {k: float(v[mes_vigente_idx]) for k, v in montante_pb.items()},
+                "montante_real": {k: float(v[mes_vigente_idx]) for k, v in montante_real_rf.items()},
+                "justificativas": st.session_state.justificativas.get(mes_vigente_sel, {})
             }
-            st.session_state.historico_rfx[nome_versao_rfx] = dados_congelados
-            salvar_json(FILE_HISTORICO_RFX, st.session_state.historico_rfx)
-            st.success(f"✅ Versão '{nome_versao_rfx}' gravada com sucesso! Consulte-a a qualquer momento na 'Aba 3: Histórico de Versões'.")
+            st.session_state.fechamentos_mes[mes_vigente_sel] = dados_fechamento
+            salvar_json(FILE_FECHAMENTOS_MES, st.session_state.fechamentos_mes)
+            st.success(f"✅ Fechamento de {mes_vigente_sel} registrado com sucesso! Consulte-o na Aba 3.")
             st.rerun()
 
-
-# =========================================================
-# ABA 3: HISTÓRICO DE VERSÕES CONGELADAS (RFX)
-# =========================================================
-with tab3:
-    st.header("📚 Relatórios de Rolling Forecast Congelados (RFX)")
-    st.caption("Consulte os cenários oficiais salvos e compare as projeções históricas apresentadas à diretoria.")
-
-    versoes_disponiveis = list(st.session_state.historico_rfx.keys())
-
-    if not versoes_disponiveis:
-        st.info("Nenhuma versão de RFX foi salva até o momento. Vá até a Aba 2 e utilize o botão '📸 Congelar e Salvar Versão RFX'.")
-    else:
-        col_v_sel, col_v_del = st.columns([3, 1])
-        with col_v_sel:
-            versao_selecionada = st.selectbox("Selecione a Versão de Rolling Forecast para Visualizar:", versoes_disponiveis)
-        with col_v_del:
+    # Opção B: Rolling Forecast (RFX)
+    with col_reg2:
+        st.markdown("##### 2. Congelar Relatório de Rolling Forecast (RFX)")
+        sugestao_nome = f"RF{mes_vigente_idx + 1:02d}"
+        col_n, col_b = st.columns([2, 1])
+        with col_n:
+            nome_versao_rfx = st.text_input("Código do RF:", value=sugestao_nome, help="Exemplo: RF03, RF06, RF09")
+        with col_b:
             st.write("")
             st.write("")
-            if st.button("🗑️ Excluir esta Versão"):
-                del st.session_state.historico_rfx[versao_selecionada]
+            if st.button("💾 Congelar RFX"):
+                dados_congelados = {
+                    "data_gravacao": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                    "mes_corte": mes_vigente_sel,
+                    "vol_pb": list(vol_pb_arr),
+                    "vol_real_rf": list(vol_real_rf_arr),
+                    "unitario_pb": {k: list(v) for k, v in unitario_pb.items()},
+                    "unitario_real_rf": {k: list(v) for k, v in unitario_real_rf.items()},
+                    "montante_pb": {k: list(v) for k, v in montante_pb.items()},
+                    "montante_real_rf": {k: list(v) for k, v in montante_real_rf.items()},
+                    "justificativas": st.session_state.justificativas.get(mes_vigente_sel, {})
+                }
+                st.session_state.historico_rfx[nome_versao_rfx] = dados_congelados
                 salvar_json(FILE_HISTORICO_RFX, st.session_state.historico_rfx)
-                st.warning(f"Versão {versao_selecionada} excluída com sucesso.")
+                st.success(f"✅ Versão '{nome_versao_rfx}' gravada com sucesso! Consulte-a na Aba 3.")
                 st.rerun()
 
-        dados_v = st.session_state.historico_rfx[versao_selecionada]
-        st.success(f"📌 **Relatório {versao_selecionada}** | Salvo em: **{dados_v.get('data_gravacao', '-')}** | Mês Vigente no Fechamento: **{dados_v.get('mes_corte', '-')}**")
 
-        v_vol_pb = np.array(dados_v["vol_pb"])
-        v_vol_rf = np.array(dados_v["vol_real_rf"])
-        v_montante_pb = {k: np.array(v) for k, v in dados_v["montante_pb"].items()}
-        v_montante_rf = {k: np.array(v) for k, v in dados_v["montante_real_rf"].items()}
-        v_unit_pb = {k: np.array(v) for k, v in dados_v["unitario_pb"].items()}
-        v_unit_rf = {k: np.array(v) for k, v in dados_v["unitario_real_rf"].items()}
+# =========================================================
+# ABA 3: HISTÓRICO DE VERSÕES CONGELADAS (RFX & FECHAMENTOS)
+# =========================================================
+with tab3:
+    st.header("📚 Relatórios de Rolling Forecast e Fechamentos Mensais")
 
-        v_tot_m_pb = sum(v_montante_pb.values())
-        v_tot_m_rf = sum(v_montante_rf.values())
-        v_tot_u_pb = np.where(v_vol_pb > 0, v_tot_m_pb / v_vol_pb, 0.0)
-        v_tot_u_rf = np.where(v_vol_rf > 0, v_tot_m_rf / v_vol_rf, 0.0)
+    subtab_a, subtab_b = st.tabs(["📑 Histórico de Rolling Forecast (RFX)", "🔒 Histórico de Fechamentos Mensais"])
 
-        # Indicadores Chave do RFX
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric(f"Volume Total ({versao_selecionada})", f"{sum(v_vol_rf):,.0f} t".replace(",", "."))
-        kpi2.metric(f"Montante Total ({versao_selecionada})", fmt_moeda_br(sum(v_tot_m_rf)))
-        kpi3.metric(f"Unitário Médio ({versao_selecionada})", fmt_unit_br(sum(v_tot_m_rf) / sum(v_vol_rf)))
-        delta_u_rfx = (sum(v_tot_m_rf) / sum(v_vol_rf)) - (sum(v_tot_m_pb) / sum(v_vol_pb))
-        kpi4.metric(f"∆ Unitário vs PB", fmt_unit_br(delta_u_rfx), delta=f"{delta_u_rfx:+.2f} R$/t", delta_color="inverse")
+    # SUB-ABA A: ROLLING FORECAST
+    with subtab_a:
+        versoes_disponiveis = list(st.session_state.historico_rfx.keys())
+        if not versoes_disponiveis:
+            st.info("Nenhuma versão de RFX foi salva até o momento.")
+        else:
+            col_v_sel, col_v_del = st.columns([3, 1])
+            with col_v_sel:
+                versao_selecionada = st.selectbox("Selecione a Versão de Rolling Forecast:", versoes_disponiveis, key="sel_rfx_box")
+            with col_v_del:
+                st.write("")
+                st.write("")
+                if st.button("🗑️ Excluir RFX"):
+                    del st.session_state.historico_rfx[versao_selecionada]
+                    salvar_json(FILE_HISTORICO_RFX, st.session_state.historico_rfx)
+                    st.warning(f"Versão {versao_selecionada} excluída.")
+                    st.rerun()
 
-        st.markdown("---")
+            dados_v = st.session_state.historico_rfx[versao_selecionada]
+            st.success(f"📌 **Relatório {versao_selecionada}** | Data de Congelamento: **{dados_v.get('data_gravacao', '-')}** | Mês de Corte: **{dados_v.get('mes_corte', '-')}**")
 
-        # 1. Tabela de Custo Unitário Salvo
-        st.subheader(f"1. Custo Unitário (R$/t) - Versão {versao_selecionada}")
-        v_ordem = ["TOTAL PB", f"TOTAL {versao_selecionada}"]
-        for f in v_montante_pb.keys():
-            v_ordem.append(f"{f} (PB)")
-            v_ordem.append(f"{f} ({versao_selecionada})")
+            v_vol_pb = np.array(dados_v["vol_pb"])
+            v_vol_rf = np.array(dados_v["vol_real_rf"])
+            v_montante_pb = {k: np.array(v) for k, v in dados_v["montante_pb"].items()}
+            v_montante_rf = {k: np.array(v) for k, v in dados_v["montante_real_rf"].items()}
+            v_unit_pb = {k: np.array(v) for k, v in dados_v["unitario_pb"].items()}
+            v_unit_rf = {k: np.array(v) for k, v in dados_v["unitario_real_rf"].items()}
 
-        dados_v_u = {}
-        for l in v_ordem:
-            if l == "TOTAL PB":
-                dados_v_u[l] = list(v_tot_u_pb) + [sum(v_tot_m_pb) / sum(v_vol_pb)]
-            elif l == f"TOTAL {versao_selecionada}":
-                dados_v_u[l] = list(v_tot_u_rf) + [sum(v_tot_m_rf) / sum(v_vol_rf)]
-            elif "(PB)" in l:
-                fn = l.replace(" (PB)", "")
-                dados_v_u[l] = list(v_unit_pb.get(fn, np.zeros(12))) + [sum(v_montante_pb.get(fn, np.zeros(12))) / sum(v_vol_pb)]
-            elif f"({versao_selecionada})" in l:
-                fn = l.replace(f" ({versao_selecionada})", "")
-                dados_v_u[l] = list(v_unit_rf.get(fn, np.zeros(12))) + [sum(v_montante_rf.get(fn, np.zeros(12))) / sum(v_vol_rf)]
+            v_tot_m_pb = sum(v_montante_pb.values())
+            v_tot_m_rf = sum(v_montante_rf.values())
+            v_tot_u_pb = np.where(v_vol_pb > 0, v_tot_m_pb / v_vol_pb, 0.0)
+            v_tot_u_rf = np.where(v_vol_rf > 0, v_tot_m_rf / v_vol_rf, 0.0)
 
-        df_v_exib_u = pd.DataFrame.from_dict(dados_v_u, orient="index", columns=MESES + ["Média Ponderada"])
-        st.dataframe(df_v_exib_u.style.format(fmt_unit_br), use_container_width=True)
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            kpi1.metric(f"Volume ({versao_selecionada})", f"{sum(v_vol_rf):,.0f} t".replace(",", "."))
+            kpi2.metric(f"Montante Total ({versao_selecionada})", fmt_moeda_br(sum(v_tot_m_rf)))
+            kpi3.metric(f"Unitário Médio ({versao_selecionada})", fmt_unit_br(sum(v_tot_m_rf) / sum(v_vol_rf)))
+            delta_u_rfx = (sum(v_tot_m_rf) / sum(v_vol_rf)) - (sum(v_tot_m_pb) / sum(v_vol_pb))
+            kpi4.metric(f"∆ Unitário vs PB", fmt_unit_br(delta_u_rfx), delta=f"{delta_u_rfx:+.2f} R$/t", delta_color="inverse")
 
-        # 2. Tabela de Montante Salvo
-        st.subheader(f"2. Montante (R$) - Versão {versao_selecionada}")
-        dados_v_m = {}
-        for l in v_ordem:
-            if l == "TOTAL PB":
-                dados_v_m[l] = list(v_tot_m_pb) + [sum(v_tot_m_pb)]
-            elif l == f"TOTAL {versao_selecionada}":
-                dados_v_m[l] = list(v_tot_m_rf) + [sum(v_tot_m_rf)]
-            elif "(PB)" in l:
-                fn = l.replace(" (PB)", "")
-                dados_v_m[l] = list(v_montante_pb.get(fn, np.zeros(12))) + [sum(v_montante_pb.get(fn, np.zeros(12)))]
-            elif f"({versao_selecionada})" in l:
-                fn = l.replace(f" ({versao_selecionada})", "")
-                dados_v_m[l] = list(v_montante_rf.get(fn, np.zeros(12))) + [sum(v_montante_rf.get(fn, np.zeros(12)))]
+            st.markdown("---")
+            st.subheader(f"1. Custo Unitário (R$/t) - {versao_selecionada}")
+            v_ordem = ["TOTAL PB", f"TOTAL {versao_selecionada}"]
+            for f in v_montante_pb.keys():
+                v_ordem.append(f"{f} (PB)")
+                v_ordem.append(f"{f} ({versao_selecionada})")
 
-        df_v_exib_m = pd.DataFrame.from_dict(dados_v_m, orient="index", columns=MESES + ["Total Ano"])
-        st.dataframe(df_v_exib_m.style.format(fmt_moeda_br), use_container_width=True)
+            dados_v_u = {}
+            for l in v_ordem:
+                if l == "TOTAL PB":
+                    dados_v_u[l] = list(v_tot_u_pb) + [sum(v_tot_m_pb) / sum(v_vol_pb)]
+                elif l == f"TOTAL {versao_selecionada}":
+                    dados_v_u[l] = list(v_tot_u_rf) + [sum(v_tot_m_rf) / sum(v_vol_rf)]
+                elif "(PB)" in l:
+                    fn = l.replace(" (PB)", "")
+                    dados_v_u[l] = list(v_unit_pb.get(fn, np.zeros(12))) + [sum(v_montante_pb.get(fn, np.zeros(12))) / sum(v_vol_pb)]
+                elif f"({versao_selecionada})" in l:
+                    fn = l.replace(f" ({versao_selecionada})", "")
+                    dados_v_u[l] = list(v_unit_rf.get(fn, np.zeros(12))) + [sum(v_montante_rf.get(fn, np.zeros(12))) / sum(v_vol_rf)]
 
-        st.markdown("---")
-        
-        # 3. Bridge Waterfall da Versão Salva
-        st.subheader(f"3. Bridge Unitário: PB vs {versao_selecionada} (Ano Completo)")
-        
-        u_base_pb = sum(v_tot_m_pb) / sum(v_vol_pb)
-        u_final_rf = sum(v_tot_m_rf) / sum(v_vol_rf)
-        
-        bx = ["PB Base"]
-        by = [u_base_pb]
-        bmeasures = ["absolute"]
+            df_v_exib_u = pd.DataFrame.from_dict(dados_v_u, orient="index", columns=MESES + ["Média Ponderada"])
+            st.dataframe(df_v_exib_u.style.format(fmt_unit_br), use_container_width=True)
 
-        for f in v_montante_pb.keys():
-            u_f_pb = sum(v_montante_pb[f]) / sum(v_vol_pb)
-            u_f_rf = sum(v_montante_rf[f]) / sum(v_vol_rf)
-            bx.append(f)
-            by.append(u_f_rf - u_f_pb)
-            bmeasures.append("relative")
+    # SUB-ABA B: HISTÓRICO DE FECHAMENTOS MENSAIS
+    with subtab_b:
+        fechamentos_disponiveis = list(st.session_state.fechamentos_mes.keys())
+        if not fechamentos_disponiveis:
+            st.info("Nenhum fechamento mensal foi gravado até o momento. Utilize o botão 'Gravar Fechamento Oficial' na Aba 2.")
+        else:
+            col_f_sel, col_f_del = st.columns([3, 1])
+            with col_f_sel:
+                mes_fechado_sel = st.selectbox("Selecione o Mês Fechado:", fechamentos_disponiveis, key="sel_fech_mes")
+            with col_f_del:
+                st.write("")
+                st.write("")
+                if st.button("🗑️ Excluir Fechamento"):
+                    del st.session_state.fechamentos_mes[mes_fechado_sel]
+                    salvar_json(FILE_FECHAMENTOS_MES, st.session_state.fechamentos_mes)
+                    st.warning(f"Fechamento de {mes_fechado_sel} excluído.")
+                    st.rerun()
 
-        bx.append(f"{versao_selecionada} Final")
-        by.append(0)
-        bmeasures.append("total")
+            dados_fech = st.session_state.fechamentos_mes[mes_fechado_sel]
+            st.success(f"📌 **Fechamento Oficial: {mes_fechado_sel}** | Gravado em: **{dados_fech.get('data_fechamento', '-')}**")
 
-        btextos = []
-        for v, m in zip(by, bmeasures):
-            if m == "relative":
-                sinal = "+" if v >= 0 else "-"
-                btextos.append(f"{sinal} R$ {abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            else:
-                btextos.append(f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            # Indicadores do mês fechado
+            f_u_pb = sum(dados_fech["montante_pb"].values()) / dados_fech["vol_pb"]
+            f_u_real = sum(dados_fech["montante_real"].values()) / dados_fech["vol_real"]
+            delta_f = f_u_real - f_u_pb
+            pct_f = ((f_u_real / f_u_pb) - 1) * 100
 
-        fig_v = go.Figure(go.Waterfall(
-            name=f"Bridge {versao_selecionada}",
-            orientation="v",
-            measure=bmeasures,
-            x=bx,
-            textposition="outside",
-            text=btextos,
-            y=by,
-            connector={"line": {"color": "#666"}},
-            increasing={"marker": {"color": "#E53935"}},
-            decreasing={"marker": {"color": "#43A047"}},
-            totals={"marker": {"color": "#1E88E5"}}
-        ))
-        fig_v.update_layout(
-            title=f"Bridge de Variação Unitária: PB vs {versao_selecionada} (R$/t)",
-            yaxis_title="R$/t",
-            waterfallgap=0.3,
-            height=430,
-            margin=dict(l=30, r=30, t=50, b=30)
-        )
-        st.plotly_chart(fig_v, use_container_width=True)
+            fk1, fk2, fk3, fk4 = st.columns(4)
+            fk1.metric("Volume Realizado", f"{dados_fech['vol_real']:,.0f} t".replace(",", "."))
+            fk2.metric("Desembolso Real", fmt_moeda_br(sum(dados_fech["montante_real"].values())))
+            fk3.metric("Unitário Realizado", fmt_unit_br(f_u_real))
+            fk4.metric("Desvio vs PB", fmt_unit_br(delta_f), delta=f"{pct_f:+.2f}%", delta_color="inverse")
+
+            st.markdown("---")
+            st.subheader(f"Tabela de Desvios e Justificativas - {mes_fechado_sel}")
+            
+            linhas_fech = []
+            justs_fech = dados_fech.get("justificativas", {})
+            for f in dados_fech["unitario_pb"].keys():
+                u_p = dados_fech["unitario_pb"][f]
+                u_r = dados_fech["unitario_real"][f]
+                linhas_fech.append({
+                    "Fornecedor": f,
+                    "PB (R$/t)": u_p,
+                    "Real (R$/t)": u_r,
+                    "Desvio (R$/t)": u_r - u_p,
+                    "Justificativa Registrada": justs_fech.get(f, "Sem justificativa")
+                })
+            
+            df_fech_tabela = pd.DataFrame(linhas_fech)
+            st.dataframe(
+                df_fech_tabela.style.format({
+                    "PB (R$/t)": fmt_unit_br,
+                    "Real (R$/t)": fmt_unit_br,
+                    "Desvio (R$/t)": fmt_unit_br
+                }),
+                use_container_width=True
+            )
