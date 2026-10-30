@@ -12,7 +12,7 @@ MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "
 mes_atual_sistema = datetime.today().month - 1
 
 # =========================================================
-# FUNÇÕES DE PERSISTÊNCIA EM DISCO (ARQUIVOS LOCAIS)
+# FUNÇÕES DE PERSISTÊNCIA EM DISCO
 # =========================================================
 FILE_FORNECEDORES = "dados_fornecedores.json"
 FILE_VOLUMES = "dados_volumes.json"
@@ -128,24 +128,26 @@ with tab1:
         )
     mes_vigente_idx = MESES.index(mes_vigente_sel)
 
-    # Estilização de Volumes
-    def estilizar_tabela_volume(df):
+    # Função de Estilização Periódica Padrão (Verde = Passado, Azul = Vigente)
+    def estilizar_colunas_periodo_padrao(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
         for i, col in enumerate(MESES):
-            bg = ""
-            if i < mes_vigente_idx:
-                bg = "background-color: #E8F5E9;"
-            elif i == mes_vigente_idx:
-                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"
-            
-            for idx in df.index:
-                cell_style = bg
-                if idx == "Volume Real+RF":
-                    v_rf = df.loc["Volume Real+RF", col]
-                    v_pb = df.loc["Volume PB", col]
-                    if pd.notna(v_rf) and pd.notna(v_pb) and float(v_rf) < float(v_pb):
-                        cell_style += " color: #D32F2F; font-weight: bold;"
-                styles.loc[idx, col] = cell_style
+            if col in styles.columns:
+                if i < mes_vigente_idx:
+                    styles[col] = "background-color: #E8F5E9;"  # Verde claro
+                elif i == mes_vigente_idx:
+                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
+        return styles
+
+    # Estilização de Volumes
+    def estilizar_tabela_volume(df):
+        styles = estilizar_colunas_periodo_padrao(df)
+        for col in MESES:
+            if col in df.columns and "Volume Real+RF" in df.index and "Volume PB" in df.index:
+                v_rf = df.loc["Volume Real+RF", col]
+                v_pb = df.loc["Volume PB", col]
+                if pd.notna(v_rf) and pd.notna(v_pb) and float(v_rf) < float(v_pb):
+                    styles.loc["Volume Real+RF", col] += " color: #D32F2F; font-weight: bold;"
         return styles
 
     st.subheader("Painel Comparativo de Volumes (t)")
@@ -219,7 +221,7 @@ with tab1:
     # 2. TABELA ÚNICA MENSALIZADA DO PB DOS FORNECEDORES
     # -------------------------------------------------------------
     st.header("2. Valores Mensais do PB dos Fornecedores (Plano Básico)")
-    st.caption("🔒 *Tabela travada com os valores orçados mensais de cada fornecedor. Tarifas expressas em R$/t e Custos Fixos em R$ mensal.*")
+    st.caption("🔒 *Tabela travada que alimenta o PB de forma imutável. Tarifas em R$/t e Custos Fixos em R$ mensal.*")
 
     for _, f_row in st.session_state.fornecedores.iterrows():
         f_nome = str(f_row["Fornecedor"]).strip()
@@ -236,7 +238,7 @@ with tab1:
     for _, f_row in st.session_state.fornecedores.iterrows():
         tipo_fornec_map[str(f_row["Fornecedor"]).strip()] = str(f_row.get("Tipo", "Tarifa (R$/t)"))
 
-    # Função com conversão segura para evitar o LossySetitemError
+    # Formatação com cores de meses passados (verde) e vigente (azul)
     def formatar_tabela_pb_fornec(df):
         formatted_df = pd.DataFrame(index=df.index, columns=df.columns, dtype=object)
         for r in df.index:
@@ -250,7 +252,7 @@ with tab1:
         return formatted_df
 
     st.dataframe(
-        formatar_tabela_pb_fornec(df_pb_fornec_exib),
+        formatar_tabela_pb_fornec(df_pb_fornec_exib).style.apply(estilizar_colunas_periodo_padrao, axis=None),
         use_container_width=True
     )
 
@@ -298,18 +300,8 @@ with tab1:
     st.header("3. Índices Macroeconômicos (% ao mês)")
     df_ind_exib = st.session_state.indices.set_index("Mês").T
 
-    def estilizar_indices(df):
-        styles = pd.DataFrame("", index=df.index, columns=df.columns)
-        for i, col in enumerate(MESES):
-            if col in styles.columns:
-                if i < mes_vigente_idx:
-                    styles[col] = "background-color: #E8F5E9;"
-                elif i == mes_vigente_idx:
-                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"
-        return styles
-
     st.dataframe(
-        df_ind_exib.style.apply(estilizar_indices, axis=None).format(fmt_pct_br),
+        df_ind_exib.style.apply(estilizar_colunas_periodo_padrao, axis=None).format(fmt_pct_br),
         use_container_width=True
     )
 
@@ -333,7 +325,7 @@ with tab1:
     # 4. CADASTRO DE FORNECEDORES & PARAMÉTRICAS (REAL+RF)
     # -------------------------------------------------------------
     st.header("4. Cadastro de Fornecedores & Paramétricas (Real+RF)")
-    st.caption("ℹ️ Defina as regras de projeção para o Real+RF. O campo **Valor Base** é o valor do **Mês Vigente**.")
+    st.caption("ℹ️ Esta tabela é exclusiva para **projetar custos para frente** (do mês vigente em diante). Ela não altera o PB e não apaga os meses passados.")
     
     if "Mes_Inicio" not in st.session_state.fornecedores.columns:
         st.session_state.fornecedores["Mes_Inicio"] = 1
@@ -345,8 +337,8 @@ with tab1:
         column_config={
             "Fornecedor": st.column_config.TextColumn("Fornecedor", required=True),
             "Tipo": st.column_config.SelectboxColumn("Tipo de Custo", options=["Tarifa (R$/t)", "Fixo (R$)"], required=True),
-            "Valor_Base": st.column_config.NumberColumn("Valor Base Mês Vigente (R$)", step=0.1, required=True),
-            "Mes_Inicio": st.column_config.NumberColumn("Mês Início (1-12)", min_value=1, max_value=12, step=1, default=1),
+            "Valor_Base": st.column_config.NumberColumn("Valor Base Projeção (R$)", step=0.1, required=True),
+            "Mes_Inicio": st.column_config.NumberColumn("Mês Início Nova Regra (1-12)", min_value=1, max_value=12, step=1, default=1),
             "Gatilho_Mensal": st.column_config.SelectboxColumn("Gatilho Mensal", options=["Nenhum", "Diesel", "IPCA", "INPC", "IGPM"]),
             "Mes_Aniv": st.column_config.NumberColumn("Mês Aniv. (1-12)", min_value=1, max_value=12, step=1),
             "Indice_Aniv": st.column_config.SelectboxColumn("Índice Aniversário", options=["Nenhum", "IPCA", "INPC", "IGPM"])
@@ -357,12 +349,12 @@ with tab1:
     if st.button("💾 Salvar Cadastro de Fornecedores", type="primary"):
         st.session_state.fornecedores = edit_fornec
         salvar_json(FILE_FORNECEDORES, edit_fornec.to_dict(orient="records"))
-        st.success("Fornecedores salvos com sucesso!")
+        st.success("Paramétricas de projeção salvas!")
         st.rerun()
 
 
 # =========================================================
-# MOTOR DE CÁLCULO DINÂMICO
+# MOTOR DE CÁLCULO
 # =========================================================
 vol_pb_arr = np.array(st.session_state.vol_pb, dtype=float)
 vol_real_rf_arr = np.array(st.session_state.vol_real_rf, dtype=float)
@@ -374,8 +366,24 @@ inpc_taxa = df_ind["INPC_%"].values / 100.0
 igpm_taxa = df_ind["IGPM_%"].values / 100.0
 
 montante_pb = {}
-montante_real_rf_calculado = {}
 unitario_pb = {}
+
+# 1. PB 100% BLINDADO: Puxa ESTRITAMENTE da Tabela 2 da Aba 1 (pb_fornecedores)
+for f_nome, vals_pb in st.session_state.pb_fornecedores.items():
+    f_nome_str = str(f_nome).strip()
+    tipo_f = tipo_fornec_map.get(f_nome_str, "Tarifa (R$/t)")
+    vals_arr = np.array(vals_pb, dtype=float)
+    
+    if "Tarifa" in tipo_f:
+        unitario_pb[f_nome_str] = vals_arr
+        montante_pb[f_nome_str] = vals_arr * vol_pb_arr
+    else:
+        montante_pb[f_nome_str] = vals_arr
+        unitario_pb[f_nome_str] = np.where(vol_pb_arr > 0, vals_arr / vol_pb_arr, 0.0)
+
+# 2. PROJEÇÃO REAL+RF BASE (Paramétrica para frente, sem zerar passado)
+proj_tarifa_rf = {}
+proj_fixo_rf = {}
 
 for _, row in st.session_state.fornecedores.iterrows():
     nome = str(row.get("Fornecedor", "")).strip()
@@ -401,53 +409,59 @@ for _, row in st.session_state.fornecedores.iterrows():
     elif idx_aniv == "IGPM":
         taxa_aniv = np.sum(igpm_taxa)
 
-    valores_pb_fornec = st.session_state.pb_fornecedores.get(nome, [base] * 12)
-    m_pb = np.zeros(12)
-    u_pb = np.zeros(12)
-    
-    for m in range(12):
-        if m >= m_inicio:
-            val_p = float(valores_pb_fornec[m])
-            if tipo == "Tarifa (R$/t)":
-                u_pb[m] = val_p
-                m_pb[m] = val_p * vol_pb_arr[m]
+    # Valores históricos herdados do PB daquele fornecedor
+    hist_pb_forn = st.session_state.pb_fornecedores.get(nome, [base] * 12)
+    curva_u = np.zeros(12)
+    curva_m = np.zeros(12)
+
+    # Meses passados (< mes_vigente_idx): NÃO ZERAM, mantêm o histórico do PB se o fornecedor já existia
+    for m in range(mes_vigente_idx):
+        if nome in st.session_state.pb_fornecedores:
+            val_p = float(hist_pb_forn[m])
+            if "Tarifa" in tipo:
+                curva_u[m] = val_p
+                curva_m[m] = val_p * vol_real_rf_arr[m]
             else:
-                m_pb[m] = val_p
-                u_pb[m] = val_p / vol_pb_arr[m] if vol_pb_arr[m] > 0 else 0.0
+                curva_m[m] = val_p
+                curva_u[m] = val_p / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+        else:
+            # Fornecedor novo só conta a partir do m_inicio
+            if m >= m_inicio:
+                if "Tarifa" in tipo:
+                    curva_u[m] = base
+                    curva_m[m] = base * vol_real_rf_arr[m]
+                else:
+                    curva_m[m] = base
+                    curva_u[m] = base / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
 
-    montante_pb[nome] = m_pb
-    unitario_pb[nome] = u_pb
+    # Mês vigente: assume o novo Valor_Base
+    if "Tarifa" in tipo:
+        curva_u[mes_vigente_idx] = base
+        curva_m[mes_vigente_idx] = base * vol_real_rf_arr[mes_vigente_idx]
+    else:
+        curva_m[mes_vigente_idx] = base
+        curva_u[mes_vigente_idx] = base / vol_real_rf_arr[mes_vigente_idx] if vol_real_rf_arr[mes_vigente_idx] > 0 else 0.0
 
-    m_calc = np.zeros(12)
-    u_calc = np.zeros(12)
-    
-    for m in range(mes_vigente_idx + 1):
-        if m >= m_inicio:
-            if tipo == "Tarifa (R$/t)":
-                u_calc[m] = base
-                m_calc[m] = base * vol_real_rf_arr[m]
-            else:
-                m_calc[m] = base
-                u_calc[m] = base / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
-
+    # Meses posteriores encadeados com diesel e aniversário
     for m in range(mes_vigente_idx + 1, 12):
-        if m < m_inicio:
-            continue
         var_mensal = (1.0 + diesel_taxa[m]) if gatilho == "Diesel" else 1.0
         var_aniv = (1.0 + taxa_aniv) if m == m_aniv else 1.0
         
-        if tipo == "Tarifa (R$/t)":
-            tarifa_ant = u_calc[m - 1] if m - 1 >= m_inicio else base
+        if "Tarifa" in tipo:
+            tarifa_ant = curva_u[m - 1] if curva_u[m - 1] > 0 else base
             tarifa_m = tarifa_ant * var_mensal * var_aniv
-            u_calc[m] = tarifa_m
-            m_calc[m] = tarifa_m * vol_real_rf_arr[m]
+            curva_u[m] = tarifa_m
+            curva_m[m] = tarifa_m * vol_real_rf_arr[m]
         else:
-            custo_ant = m_calc[m - 1] if m - 1 >= m_inicio else base
+            custo_ant = curva_m[m - 1] if curva_m[m - 1] > 0 else base
             custo_m = custo_ant * var_aniv
-            m_calc[m] = custo_m
-            u_calc[m] = custo_m / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+            curva_m[m] = custo_m
+            curva_u[m] = custo_m / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
 
-    montante_real_rf_calculado[nome] = m_calc
+    if "Tarifa" in tipo:
+        proj_tarifa_rf[nome] = curva_u
+    else:
+        proj_fixo_rf[nome] = curva_m
 
 
 # =========================================================
@@ -466,53 +480,98 @@ with tab2:
         unsafe_allow_html=True
     )
 
-    with st.expander("✏️ Clique aqui para imputar / ajustar valores mensais de Real+RF por fornecedor", expanded=False):
-        st.caption("Você pode ajustar os valores de cada mês livremente. Ao salvar, as alterações ficam gravadas permanentemente.")
-        df_editor_input = pd.DataFrame(index=list(montante_pb.keys()), columns=MESES)
-        for f in montante_pb.keys():
-            if f in st.session_state.matriz_real_rf_custom:
-                df_editor_input.loc[f] = st.session_state.matriz_real_rf_custom[f]
-            else:
-                df_editor_input.loc[f] = montante_real_rf_calculado[f]
-
-        editado_rf = st.data_editor(df_editor_input.astype(float), use_container_width=True, key="editor_matriz_rf_key")
+    # -------------------------------------------------------------
+    # EDITOR CUSTOMIZADO DE REAL+RF (TARIFA vs FIXO)
+    # -------------------------------------------------------------
+    with st.expander("✏️ Ajustar Valores de Real+RF (Tarifas em R$/t e Fixos em R$)", expanded=False):
+        st.write("Ajuste os valores reais já apurados ou projeções específicas. O sistema calcula automaticamente o montante ou unitário correspondente.")
         
-        if st.button("💾 Salvar Valores de Real+RF"):
-            for f in editado_rf.index:
-                st.session_state.matriz_real_rf_custom[f] = [float(x) for x in editado_rf.loc[f].values]
+        # Sub-tabela 1: Fornecedores com Tarifa (R$/t)
+        st.markdown("##### 1. Fornecedores Tarifários (Editar Tarifa em R$/t)")
+        lista_tarifarios = [f for f in st.session_state.fornecedores["Fornecedor"].dropna().unique() if "Tarifa" in tipo_fornec_map.get(f, "")]
+        if lista_tarifarios:
+            df_tar_edit = pd.DataFrame(index=lista_tarifarios, columns=MESES)
+            for f in lista_tarifarios:
+                if f in st.session_state.matriz_real_rf_custom:
+                    df_tar_edit.loc[f] = st.session_state.matriz_real_rf_custom[f]
+                else:
+                    df_tar_edit.loc[f] = proj_tarifa_rf.get(f, [0.0] * 12)
+            
+            res_tar = st.data_editor(df_tar_edit.astype(float), use_container_width=True, key="editor_tar_rf")
+        else:
+            res_tar = pd.DataFrame()
+
+        # Sub-tabela 2: Fornecedores de Custo Fixo (R$)
+        st.markdown("##### 2. Fornecedores de Custo Fixo (Editar Montante em R$)")
+        lista_fixos = [f for f in st.session_state.fornecedores["Fornecedor"].dropna().unique() if "Fixo" in tipo_fornec_map.get(f, "")]
+        if lista_fixos:
+            df_fix_edit = pd.DataFrame(index=lista_fixos, columns=MESES)
+            for f in lista_fixos:
+                if f in st.session_state.matriz_real_rf_custom:
+                    df_fix_edit.loc[f] = st.session_state.matriz_real_rf_custom[f]
+                else:
+                    df_fix_edit.loc[f] = proj_fixo_rf.get(f, [0.0] * 12)
+            
+            res_fix = st.data_editor(df_fix_edit.astype(float), use_container_width=True, key="editor_fix_rf")
+        else:
+            res_fix = pd.DataFrame()
+
+        if st.button("💾 Salvar Ajustes de Real+RF", type="primary"):
+            for f in res_tar.index:
+                st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_tar.loc[f].values]
+            for f in res_fix.index:
+                st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_fix.loc[f].values]
             salvar_json(FILE_CUSTOM_RF, st.session_state.matriz_real_rf_custom)
-            st.success("Valores salvos com sucesso!")
+            st.success("Ajustes de Real+RF salvos com sucesso!")
             st.rerun()
 
+    # Consolidação Final dos Montantes e Unitários de Real+RF
     montante_real_rf = {}
     unitario_real_rf = {}
-    for f in montante_pb.keys():
-        if f in st.session_state.matriz_real_rf_custom:
-            m_rf_val = np.array(st.session_state.matriz_real_rf_custom[f], dtype=float)
-        else:
-            m_rf_val = montante_real_rf_calculado[f]
-        
-        montante_real_rf[f] = m_rf_val
-        unitario_real_rf[f] = np.where(vol_real_rf_arr > 0, m_rf_val / vol_real_rf_arr, 0.0)
 
+    for _, row in st.session_state.fornecedores.iterrows():
+        f = str(row.get("Fornecedor", "")).strip()
+        if not f:
+            continue
+        tipo = str(row.get("Tipo", "Tarifa (R$/t)"))
+        
+        if "Tarifa" in tipo:
+            if f in st.session_state.matriz_real_rf_custom:
+                tarifa_vals = np.array(st.session_state.matriz_real_rf_custom[f], dtype=float)
+            else:
+                tarifa_vals = np.array(proj_tarifa_rf.get(f, [0.0] * 12), dtype=float)
+            unitario_real_rf[f] = tarifa_vals
+            montante_real_rf[f] = tarifa_vals * vol_real_rf_arr
+        else:
+            if f in st.session_state.matriz_real_rf_custom:
+                fixo_vals = np.array(st.session_state.matriz_real_rf_custom[f], dtype=float)
+            else:
+                fixo_vals = np.array(proj_fixo_rf.get(f, [0.0] * 12), dtype=float)
+            montante_real_rf[f] = fixo_vals
+            unitario_real_rf[f] = np.where(vol_real_rf_arr > 0, fixo_vals / vol_real_rf_arr, 0.0)
+
+    # Totais consolidados
     total_m_pb = sum(montante_pb.values())
     total_m_real_rf = sum(montante_real_rf.values())
     total_u_pb = np.where(vol_pb_arr > 0, total_m_pb / vol_pb_arr, 0.0)
     total_u_real_rf = np.where(vol_real_rf_arr > 0, total_m_real_rf / vol_real_rf_arr, 0.0)
 
+    # Linhas ordenadas: TOTAL PB, TOTAL Real+RF, depois intercalando PB e Real+RF
+    todos_fornecedores_ordenados = list(dict.fromkeys(list(montante_pb.keys()) + list(montante_real_rf.keys())))
     ordem_linhas = ["TOTAL PB", "TOTAL Real+RF"]
-    for f in montante_pb.keys():
+    for f in todos_fornecedores_ordenados:
         ordem_linhas.append(f"{f} (PB)")
         ordem_linhas.append(f"{f} (Real+RF)")
 
+    # Função de estilização para Custos (Verde passado, Azul vigente, Vermelho estouro)
     def estilizar_tabela_custos(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
         for i, col in enumerate(MESES):
             bg = ""
             if i < mes_vigente_idx:
-                bg = "background-color: #E8F5E9;"
+                bg = "background-color: #E8F5E9;"  # Verde claro
             elif i == mes_vigente_idx:
-                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"
+                bg = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
             
             for idx in df.index:
                 cell_style = bg
@@ -530,7 +589,9 @@ with tab2:
     sum_vol_pb = sum(vol_pb_arr)
     sum_vol_rf = sum(vol_real_rf_arr)
 
+    # -------------------------------------------------------------
     # 1. TABELA DE CUSTO UNITÁRIO (PRIMEIRO)
+    # -------------------------------------------------------------
     st.subheader("1. Tabela Comparativa em Unitário (R$/t)")
     dados_u = {}
     for l in ordem_linhas:
@@ -542,12 +603,14 @@ with tab2:
             dados_u[l] = list(total_u_real_rf) + [media]
         elif "(PB)" in l:
             fn = l.replace(" (PB)", "")
-            media = sum(montante_pb[fn]) / sum_vol_pb if sum_vol_pb > 0 else 0.0
-            dados_u[l] = list(unitario_pb[fn]) + [media]
+            vals = unitario_pb.get(fn, np.zeros(12))
+            media = sum(montante_pb.get(fn, np.zeros(12))) / sum_vol_pb if sum_vol_pb > 0 else 0.0
+            dados_u[l] = list(vals) + [media]
         elif "(Real+RF)" in l:
             fn = l.replace(" (Real+RF)", "")
-            media = sum(montante_real_rf[fn]) / sum_vol_rf if sum_vol_rf > 0 else 0.0
-            dados_u[l] = list(unitario_real_rf[fn]) + [media]
+            vals = unitario_real_rf.get(fn, np.zeros(12))
+            media = sum(montante_real_rf.get(fn, np.zeros(12))) / sum_vol_rf if sum_vol_rf > 0 else 0.0
+            dados_u[l] = list(vals) + [media]
 
     df_tabela_u = pd.DataFrame.from_dict(dados_u, orient="index", columns=MESES + ["Média Ponderada"])
     st.dataframe(
@@ -555,7 +618,9 @@ with tab2:
         use_container_width=True
     )
 
+    # -------------------------------------------------------------
     # 2. TABELA DE MONTANTE (DEPOIS)
+    # -------------------------------------------------------------
     st.subheader("2. Tabela Comparativa em Montante (R$)")
     dados_m = {}
     for l in ordem_linhas:
@@ -565,10 +630,12 @@ with tab2:
             dados_m[l] = list(total_m_real_rf) + [sum(total_m_real_rf)]
         elif "(PB)" in l:
             fn = l.replace(" (PB)", "")
-            dados_m[l] = list(montante_pb[fn]) + [sum(montante_pb[fn])]
+            vals = montante_pb.get(fn, np.zeros(12))
+            dados_m[l] = list(vals) + [sum(vals)]
         elif "(Real+RF)" in l:
             fn = l.replace(" (Real+RF)", "")
-            dados_m[l] = list(montante_real_rf[fn]) + [sum(montante_real_rf[fn])]
+            vals = montante_real_rf.get(fn, np.zeros(12))
+            dados_m[l] = list(vals) + [sum(vals)]
 
     df_tabela_m = pd.DataFrame.from_dict(dados_m, orient="index", columns=MESES + ["Total Ano"])
     st.dataframe(
@@ -578,7 +645,9 @@ with tab2:
 
     st.markdown("---")
     
+    # -------------------------------------------------------------
     # 3. BRIDGES WATERFALL
+    # -------------------------------------------------------------
     st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
     def gerar_waterfall(titulo, start_idx, end_idx):
@@ -592,10 +661,14 @@ with tab2:
         y = [u_pb_tot]
         measures = ["absolute"]
 
-        for f in montante_pb.keys():
-            u_f_pb = montante_pb[f][start_idx:end_idx].sum() / v_pb if v_pb > 0 else 0.0
-            u_f_rf = montante_real_rf[f][start_idx:end_idx].sum() / v_rf if v_rf > 0 else 0.0
+        for f in todos_fornecedores_ordenados:
+            m_f_pb = montante_pb.get(f, np.zeros(12))[start_idx:end_idx].sum()
+            m_f_rf = montante_real_rf.get(f, np.zeros(12))[start_idx:end_idx].sum()
+            
+            u_f_pb = m_f_pb / v_pb if v_pb > 0 else 0.0
+            u_f_rf = m_f_rf / v_rf if v_rf > 0 else 0.0
             delta = u_f_rf - u_f_pb
+            
             x.append(f)
             y.append(delta)
             measures.append("relative")
