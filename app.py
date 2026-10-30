@@ -128,7 +128,7 @@ with tab1:
         )
     mes_vigente_idx = MESES.index(mes_vigente_sel)
 
-    # Função de Estilização Periódica Padrão (Verde = Passado, Azul = Vigente)
+    # Estilização Periódica Padrão
     def estilizar_colunas_periodo_padrao(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
         for i, col in enumerate(MESES):
@@ -139,7 +139,6 @@ with tab1:
                     styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
         return styles
 
-    # Estilização de Volumes
     def estilizar_tabela_volume(df):
         styles = estilizar_colunas_periodo_padrao(df)
         for col in MESES:
@@ -218,7 +217,7 @@ with tab1:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 2. CUSTO PB (TABELA TRAVADA DE CUSTO ORÇADO)
+    # 2. CUSTO PB
     # -------------------------------------------------------------
     st.header("2. Custo PB")
     st.caption("🔒 *Tabela travada que alimenta o PB de forma imutável. Tarifas em R$/t e Custos Fixos em R$ mensal.*")
@@ -345,10 +344,16 @@ with tab1:
         key="editor_fornecedores_table"
     )
 
-    if st.button("💾 Salvar Simulador RF", type="primary"):
+    if st.button("💾 Salvar e Atualizar Projeção Simulador RF", type="primary"):
         st.session_state.fornecedores = edit_fornec
         salvar_json(FILE_FORNECEDORES, edit_fornec.to_dict(orient="records"))
-        st.success("Parâmetros do Simulador RF salvos!")
+        
+        # Sincroniza a memória de Real+RF: quando o usuário salva o Simulador,
+        # limpamos as travas manuais futuras para que a nova simulação apareça imediatamente na Aba 2!
+        st.session_state.matriz_real_rf_custom = {}
+        salvar_json(FILE_CUSTOM_RF, {})
+        
+        st.success("✅ Projeção do Simulador RF atualizada com sucesso! Verifique os novos valores na Aba 2.")
         st.rerun()
 
 
@@ -412,7 +417,7 @@ for _, row in st.session_state.fornecedores.iterrows():
     curva_u = np.zeros(12)
     curva_m = np.zeros(12)
 
-    # 1. Meses anteriores a m_inicio: preservam o histórico/PB sem zerar
+    # 1. Meses anteriores a m_inicio: preservam o PB sem zerar
     for m in range(m_inicio):
         if nome in st.session_state.pb_fornecedores:
             val_p = float(hist_pb_forn[m])
@@ -426,7 +431,7 @@ for _, row in st.session_state.fornecedores.iterrows():
             curva_u[m] = 0.0
             curva_m[m] = 0.0
 
-    # 2. No mês m_inicio: assume EXATAMENTE o Valor Base (já é o previsto, sem multiplicar por custos)
+    # 2. No mês m_inicio: assume EXATAMENTE o Valor Base (sem multiplicar por custos)
     if m_inicio < 12:
         if "Tarifa" in tipo:
             curva_u[m_inicio] = base
@@ -476,8 +481,8 @@ with tab2:
     # -------------------------------------------------------------
     # EDITOR CUSTOMIZADO DE REAL+RF (TARIFA vs FIXO)
     # -------------------------------------------------------------
-    with st.expander("✏️ Ajustar Valores de Real+RF (Tarifas em R$/t e Fixos em R$)", expanded=False):
-        st.write("Ajuste os valores reais já apurados ou projeções pontuais. O sistema calcula automaticamente o montante ou unitário correspondente.")
+    with st.expander("✏️ Ajustar Manualmente Valores de Real+RF (Opcional - Fechamentos)", expanded=False):
+        st.write("Ajuste os valores reais já apurados ou projeções pontuais. Os valores padrão vêm calculados automaticamente do **Simulador RF**.")
         
         st.markdown("##### 1. Fornecedores Tarifários (Editar Tarifa em R$/t)")
         lista_tarifarios = [f for f in st.session_state.fornecedores["Fornecedor"].dropna().unique() if "Tarifa" in tipo_fornec_map.get(f, "")]
@@ -507,14 +512,22 @@ with tab2:
         else:
             res_fix = pd.DataFrame()
 
-        if st.button("💾 Salvar Ajustes de Real+RF", type="primary"):
-            for f in res_tar.index:
-                st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_tar.loc[f].values]
-            for f in res_fix.index:
-                st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_fix.loc[f].values]
-            salvar_json(FILE_CUSTOM_RF, st.session_state.matriz_real_rf_custom)
-            st.success("Ajustes de Real+RF salvos com sucesso!")
-            st.rerun()
+        col_s_rf1, col_s_rf2 = st.columns([2, 3])
+        with col_s_rf1:
+            if st.button("💾 Salvar Ajustes Manuais de Real+RF", type="primary"):
+                for f in res_tar.index:
+                    st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_tar.loc[f].values]
+                for f in res_fix.index:
+                    st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_fix.loc[f].values]
+                salvar_json(FILE_CUSTOM_RF, st.session_state.matriz_real_rf_custom)
+                st.success("Ajustes manuais salvos com sucesso!")
+                st.rerun()
+        with col_s_rf2:
+            if st.button("🔄 Redefinir Tudo com Base no Simulador RF"):
+                st.session_state.matriz_real_rf_custom = {}
+                salvar_json(FILE_CUSTOM_RF, {})
+                st.info("Valores manuais limpos. Tabelas sincronizadas diretamente com o Simulador RF!")
+                st.rerun()
 
     # Consolidação Final de Real+RF
     montante_real_rf = {}
