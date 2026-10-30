@@ -653,85 +653,127 @@ with tab2:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 3. BRIDGES WATERFALL COM SETA E PLACAS DE JUSTIFICATIVAS
+    # 3. REGISTRO DE JUSTIFICATIVAS PARA TODAS AS VISÕES
+    # -------------------------------------------------------------
+    st.header("📝 Registro de Justificativas (Mês Vigente, YTD e Full Year)")
+    st.caption("Insira as justificativas das variações para cada visão. Elas aparecem como plaquinhas sobre as barras no gráfico e ficam salvas permanentemente.")
+
+    # Cria estruturas para as 3 visões se não existirem
+    chave_just_mes = f"Mês: {mes_vigente_sel}"
+    chave_just_ytd = f"YTD (Jan-{mes_vigente_sel})"
+    chave_just_fy = "Full Year (FY)"
+
+    for c in [chave_just_mes, chave_just_ytd, chave_just_fy]:
+        if c not in st.session_state.justificativas:
+            st.session_state.justificativas[c] = {f: "" for f in todos_fornecedores_ordenados}
+
+    with st.expander("✏️ Editar Justificativas das Variações por Visão", expanded=False):
+        tab_j1, tab_j2, tab_j3 = st.tabs([
+            f"📅 Justificativas do Mês ({mes_vigente_sel})",
+            f"📈 Justificativas YTD (Jan-{mes_vigente_sel})",
+            "🌐 Justificativas Full Year (FY)"
+        ])
+
+        # Editor Mês Vigente
+        with tab_j1:
+            u_pb_m = [unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
+            u_rf_m = [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
+            df_j_mes = pd.DataFrame({
+                "Fornecedor": todos_fornecedores_ordenados,
+                "PB (R$/t)": u_pb_m,
+                "Real (R$/t)": u_rf_m,
+                "Desvio (R$/t)": np.array(u_rf_m) - np.array(u_pb_m),
+                "Justificativa": [st.session_state.justificativas[chave_just_mes].get(f, "") for f in todos_fornecedores_ordenados]
+            })
+            res_j_mes = st.data_editor(df_j_mes, disabled=["Fornecedor", "PB (R$/t)", "Real (R$/t)", "Desvio (R$/t)"], key="ed_j_mes", use_container_width=True)
+
+        # Editor YTD
+        with tab_j2:
+            v_pb_y = vol_pb_arr[:mes_vigente_idx + 1].sum()
+            v_rf_y = vol_real_rf_arr[:mes_vigente_idx + 1].sum()
+            u_pb_y = [montante_pb.get(f, np.zeros(12))[:mes_vigente_idx + 1].sum() / v_pb_y if v_pb_y > 0 else 0.0 for f in todos_fornecedores_ordenados]
+            u_rf_y = [montante_real_rf.get(f, np.zeros(12))[:mes_vigente_idx + 1].sum() / v_rf_y if v_rf_y > 0 else 0.0 for f in todos_fornecedores_ordenados]
+            df_j_ytd = pd.DataFrame({
+                "Fornecedor": todos_fornecedores_ordenados,
+                "PB YTD (R$/t)": u_pb_y,
+                "Real YTD (R$/t)": u_rf_y,
+                "Desvio YTD (R$/t)": np.array(u_rf_y) - np.array(u_pb_y),
+                "Justificativa": [st.session_state.justificativas[chave_just_ytd].get(f, "") for f in todos_fornecedores_ordenados]
+            })
+            res_j_ytd = st.data_editor(df_j_ytd, disabled=["Fornecedor", "PB YTD (R$/t)", "Real YTD (R$/t)", "Desvio YTD (R$/t)"], key="ed_j_ytd", use_container_width=True)
+
+        # Editor FY
+        with tab_j3:
+            v_pb_f = sum_vol_pb
+            v_rf_f = sum_vol_rf
+            u_pb_f = [sum(montante_pb.get(f, np.zeros(12))) / v_pb_f if v_pb_f > 0 else 0.0 for f in todos_fornecedores_ordenados]
+            u_rf_f = [sum(montante_real_rf.get(f, np.zeros(12))) / v_rf_f if v_rf_f > 0 else 0.0 for f in todos_fornecedores_ordenados]
+            df_j_fy = pd.DataFrame({
+                "Fornecedor": todos_fornecedores_ordenados,
+                "PB FY (R$/t)": u_pb_f,
+                "Real+RF FY (R$/t)": u_rf_f,
+                "Desvio FY (R$/t)": np.array(u_rf_f) - np.array(u_pb_f),
+                "Justificativa": [st.session_state.justificativas[chave_just_fy].get(f, "") for f in todos_fornecedores_ordenados]
+            })
+            res_j_fy = st.data_editor(df_j_fy, disabled=["Fornecedor", "PB FY (R$/t)", "Real+RF FY (R$/t)", "Desvio FY (R$/t)"], key="ed_j_fy", use_container_width=True)
+
+        if st.button("💾 Salvar Todas as Justificativas", type="primary"):
+            for _, r in res_j_mes.iterrows():
+                st.session_state.justificativas[chave_just_mes][r["Fornecedor"]] = str(r["Justificativa"]).strip()
+            for _, r in res_j_ytd.iterrows():
+                st.session_state.justificativas[chave_just_ytd][r["Fornecedor"]] = str(r["Justificativa"]).strip()
+            for _, r in res_j_fy.iterrows():
+                st.session_state.justificativas[chave_just_fy][r["Fornecedor"]] = str(r["Justificativa"]).strip()
+            salvar_json(FILE_JUSTIFICATIVAS, st.session_state.justificativas)
+            st.success("Justificativas das 3 visões salvas com sucesso!")
+            st.rerun()
+
+    st.markdown("---")
+    
+    # -------------------------------------------------------------
+    # 4. BRIDGES WATERFALL COM DESIGN DA IMAGEM E PLACAS
     # -------------------------------------------------------------
     st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
-    # Recupera justificativas salvas para o mês vigente
-    chave_mes_just = mes_vigente_sel
-    if chave_mes_just not in st.session_state.justificativas:
-        st.session_state.justificativas[chave_mes_just] = {f: "" for f in todos_fornecedores_ordenados}
-
-    # Painel para registrar / editar justificativas
-    with st.expander(f"📝 Registro de Justificativas das Variações ({mes_vigente_sel})", expanded=False):
-        st.caption("Insira os motivos dos estouros ou savings de cada fornecedor. Elas aparecerão como plaquinhas acima das barras e ficarão gravadas no histórico.")
-        just_dict = st.session_state.justificativas[chave_mes_just]
+    def gerar_waterfall_fpna(titulo, label_final, start_idx, end_idx, chave_just_atual):
+        v_pb = vol_pb_arr[start_idx:end_idx].sum()
+        v_rf = vol_real_rf_arr[start_idx:end_idx].sum()
         
-        df_just_input = pd.DataFrame({
-            "Fornecedor": todos_fornecedores_ordenados,
-            "PB (R$/t)": [unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados],
-            "Real (R$/t)": [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados],
-            "Desvio (R$/t)": [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] - unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados],
-            "Justificativa": [just_dict.get(f, "") for f in todos_fornecedores_ordenados]
-        })
-        
-        edit_just = st.data_editor(
-            df_just_input,
-            use_container_width=True,
-            disabled=["Fornecedor", "PB (R$/t)", "Real (R$/t)", "Desvio (R$/t)"],
-            column_config={
-                "PB (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Real (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Desvio (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Justificativa": st.column_config.TextColumn("Justificativa Executiva", width="large")
-            },
-            key="editor_just_key"
-        )
-        
-        if st.button("💾 Salvar Justificativas"):
-            for _, r in edit_just.iterrows():
-                st.session_state.justificativas[chave_mes_just][r["Fornecedor"]] = str(r["Justificativa"]).strip()
-            salvar_json(FILE_JUSTIFICATIVAS, st.session_state.justificativas)
-            st.success("Justificativas salvas com sucesso!")
-            st.rerun()
-
-    def gerar_waterfall(titulo, label_final, start_idx, end_idx, m_pb_dict, m_rf_dict, v_pb_arr, v_rf_arr, mostrar_justificativas=False):
-        v_pb = v_pb_arr[start_idx:end_idx].sum()
-        v_rf = v_rf_arr[start_idx:end_idx].sum()
-        
-        tot_pb = sum([m_pb_dict[k][start_idx:end_idx].sum() for k in m_pb_dict])
-        tot_rf = sum([m_rf_dict[k][start_idx:end_idx].sum() for k in m_rf_dict])
+        tot_pb = sum([montante_pb[k][start_idx:end_idx].sum() for k in montante_pb])
+        tot_rf = sum([montante_real_rf[k][start_idx:end_idx].sum() for k in montante_real_rf])
 
         u_pb_tot = tot_pb / v_pb if v_pb > 0 else 0.0
         u_rf_tot = tot_rf / v_rf if v_rf > 0 else 0.0
+        
+        delta_abs_total = u_rf_tot - u_pb_tot
         pct_delta_total = ((u_rf_tot / u_pb_tot) - 1) * 100 if u_pb_tot > 0 else 0.0
 
         # Primeira coluna: SEMPRE "PB"
-        x = ["PB"]
-        y = [u_pb_tot]
+        x_labels = ["PB"]
+        y_vals = [u_pb_tot]
         measures = ["absolute"]
 
         deltas_fornec = []
         for f in todos_fornecedores_ordenados:
-            m_f_pb = m_pb_dict.get(f, np.zeros(12))[start_idx:end_idx].sum()
-            m_f_rf = m_rf_dict.get(f, np.zeros(12))[start_idx:end_idx].sum()
+            m_f_pb = montante_pb.get(f, np.zeros(12))[start_idx:end_idx].sum()
+            m_f_rf = montante_real_rf.get(f, np.zeros(12))[start_idx:end_idx].sum()
             
             u_f_pb = m_f_pb / v_pb if v_pb > 0 else 0.0
             u_f_rf = m_f_rf / v_rf if v_rf > 0 else 0.0
             delta = u_f_rf - u_f_pb
             
-            x.append(f)
-            y.append(delta)
+            x_labels.append(f)
+            y_vals.append(delta)
             deltas_fornec.append(delta)
             measures.append("relative")
 
-        # Coluna final: "Real", "Real YTD" ou "Real+RF"
-        x.append(label_final)
-        y.append(0)
+        # Coluna final personalizada
+        x_labels.append(label_final)
+        y_vals.append(0)
         measures.append("total")
 
         textos = []
-        for v, m in zip(y, measures):
+        for v, m in zip(y_vals, measures):
             if m == "relative":
                 sinal = "+" if v >= 0 else "-"
                 textos.append(f"{sinal} R$ {abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -742,82 +784,84 @@ with tab2:
             name=titulo,
             orientation="v",
             measure=measures,
-            x=x,
+            x=x_labels,
             textposition="outside",
             text=textos,
-            y=y,
-            connector={"line": {"color": "#666", "width": 1.5}},
+            y=y_vals,
+            connector={"line": {"color": "#444", "width": 1.5, "dash": "dot"}},
             increasing={"marker": {"color": "#E53935"}},
             decreasing={"marker": {"color": "#43A047"}},
             totals={"marker": {"color": "#1E88E5"}}
         ))
 
-        # SETA CONECTANDO A COLUNA DO PB COM A COLUNA FINAL MOSTRANDO O %
-        cor_seta = "#D32F2F" if pct_delta_total > 0 else "#2E7D32"
-        sinal_seta = "+" if pct_delta_total > 0 else ""
-        texto_seta = f"<b>{sinal_seta}{pct_delta_total:.2f}%</b>".replace(".", ",")
+        # Altura do suporte superior (bracket)
+        max_base = max(u_pb_tot, u_rf_tot)
+        y_top_bracket = max_base * 1.22
+        y_teto_grafico = max_base * 1.42
 
-        # Ponto de topo para a curvatura da seta
-        max_y = max(u_pb_tot, u_rf_tot) * 1.08
-
-        fig.add_annotation(
-            x=x[-1],
-            y=u_rf_tot,
-            ax=x[0],
-            ay=u_pb_tot,
-            xref="x", yref="y",
-            axref="x", ayref="y",
-            showarrow=True,
-            arrowhead=2,
-            arrowsize=1.2,
-            arrowwidth=2.5,
-            arrowcolor=cor_seta,
-            text=f"Variação Total: {texto_seta}",
-            font=dict(size=12, color=cor_seta),
-            bgcolor="rgba(255, 255, 255, 0.95)",
-            bordercolor=cor_seta,
-            borderwidth=1.5,
-            borderpad=4
+        # 1. LINHA EM FORMATO DE SUPORTE SUPERIOR (BRACKET) LIGANDO PB A REAL
+        # Coordenadas: sobe de PB, vai até a última barra e desce até ela
+        fig.add_shape(
+            type="path",
+            path=f"M 0,{u_pb_tot * 1.05} L 0,{y_top_bracket} L {len(x_labels)-1},{y_top_bracket} L {len(x_labels)-1},{u_rf_tot * 1.05}",
+            line=dict(color="#111111", width=3),
+            layer="above"
         )
 
-        # PLAQUINHAS COM JUSTIFICATIVAS SOBRE AS BARRINHAS
-        if mostrar_justificativas and chave_mes_just in st.session_state.justificativas:
-            just_map = st.session_state.justificativas[chave_mes_just]
-            
-            # Calcula posições cumulativas para posicionar a plaquinha
-            acumulado = u_pb_tot
-            for i, f in enumerate(todos_fornecedores_ordenados):
-                delta_val = deltas_fornec[i]
-                acumulado_anterior = acumulado
-                acumulado += delta_val
-                
-                texto_just = just_map.get(f, "").strip()
-                if texto_just and abs(delta_val) > 0.001:
-                    y_pos = max(acumulado_anterior, acumulado) + (max(u_pb_tot, u_rf_tot) * 0.02)
-                    cor_badge = "#FFEBEE" if delta_val > 0 else "#E8F5E9"
-                    cor_borda = "#D32F2F" if delta_val > 0 else "#2E7D32"
-                    
-                    fig.add_annotation(
-                        x=f,
-                        y=y_pos,
-                        text=f"💬 <i>{texto_just}</i>",
-                        showarrow=False,
-                        font=dict(size=10, color="#1A237E"),
-                        bgcolor=cor_badge,
-                        bordercolor=cor_borda,
-                        borderwidth=1,
-                        borderpad=3,
-                        yshift=18
-                    )
+        # 2. MEDALHA OVAL PRETA CENTRALIZADA COM A VARIAÇÃO TOTAL (ESTILO IMAGEM FP&A)
+        x_meio = (len(x_labels) - 1) / 2.0
+        sinal_delta = "+" if delta_abs_total >= 0 else ""
+        texto_medalha = f"<b>{sinal_delta}{delta_abs_total:,.2f}</b> ({sinal_delta}{pct_delta_total:.1f}%)".replace(".", ",").replace("X", ".")
 
-        # Ajuste de layout com folga vertical para a seta e plaquinhas
+        fig.add_annotation(
+            x=x_meio,
+            y=y_top_bracket,
+            text=texto_medalha,
+            showarrow=False,
+            font=dict(size=14, color="#000000", family="Arial Black, Arial"),
+            bgcolor="#FFFFFF",
+            bordercolor="#000000",
+            borderwidth=3.5,
+            borderpad=8,
+            align="center",
+            yshift=0
+        )
+
+        # 3. PLAQUINHAS COM JUSTIFICATIVAS SOBRE AS BARRAS DE CADA FORNECEDOR
+        just_map = st.session_state.justificativas.get(chave_just_atual, {})
+        acumulado = u_pb_tot
+        
+        for i, f in enumerate(todos_fornecedores_ordenados):
+            delta_val = deltas_fornec[i]
+            acumulado_anterior = acumulado
+            acumulado += delta_val
+            
+            texto_just = just_map.get(f, "").strip()
+            if texto_just and abs(delta_val) > 0.001:
+                y_pos_barra = max(acumulado_anterior, acumulado)
+                cor_badge = "#FFEBEE" if delta_val > 0 else "#E8F5E9"
+                cor_borda = "#D32F2F" if delta_val > 0 else "#2E7D32"
+                
+                fig.add_annotation(
+                    x=f,
+                    y=y_pos_barra,
+                    text=f"💬 <i>{texto_just}</i>",
+                    showarrow=False,
+                    font=dict(size=10, color="#1A237E"),
+                    bgcolor=cor_badge,
+                    bordercolor=cor_borda,
+                    borderwidth=1.2,
+                    borderpad=4,
+                    yshift=24
+                )
+
         fig.update_layout(
-            title=titulo,
+            title=dict(text=f"<b>{titulo}</b>", x=0.5, xanchor="center", font=dict(size=18, color="#111")),
             yaxis_title="R$/t",
             waterfallgap=0.3,
-            height=480,
-            yaxis=dict(range=[0, max_y * 1.15]),
-            margin=dict(l=30, r=30, t=60, b=40)
+            height=530,
+            yaxis=dict(range=[0, y_teto_grafico]),
+            margin=dict(l=30, r=30, t=80, b=40)
         )
         return fig
 
@@ -829,48 +873,36 @@ with tab2:
 
     with b_tab1:
         st.plotly_chart(
-            gerar_waterfall(
-                f"Bridge Unitário: Mês de {mes_vigente_sel} (PB vs Real)",
+            gerar_waterfall_fpna(
+                f"Real vs Orçado - {mes_vigente_sel}",
                 "Real",
                 mes_vigente_idx,
                 mes_vigente_idx + 1,
-                montante_pb,
-                montante_real_rf,
-                vol_pb_arr,
-                vol_real_rf_arr,
-                mostrar_justificativas=True
+                chave_just_mes
             ),
             use_container_width=True
         )
 
     with b_tab2:
         st.plotly_chart(
-            gerar_waterfall(
-                f"Bridge Unitário YTD: Janeiro a {mes_vigente_sel} (PB vs Real YTD)",
+            gerar_waterfall_fpna(
+                f"Real vs Orçado - YTD (Janeiro a {mes_vigente_sel})",
                 "Real YTD",
                 0,
                 mes_vigente_idx + 1,
-                montante_pb,
-                montante_real_rf,
-                vol_pb_arr,
-                vol_real_rf_arr,
-                mostrar_justificativas=False
+                chave_just_ytd
             ),
             use_container_width=True
         )
 
     with b_tab3:
         st.plotly_chart(
-            gerar_waterfall(
-                "Bridge Unitário Full Year: Jan a Dez (PB vs Real+RF)",
+            gerar_waterfall_fpna(
+                "Real vs Orçado - Full Year (FY 12 Meses)",
                 "Real+RF",
                 0,
                 12,
-                montante_pb,
-                montante_real_rf,
-                vol_pb_arr,
-                vol_real_rf_arr,
-                mostrar_justificativas=False
+                chave_just_fy
             ),
             use_container_width=True
         )
@@ -878,16 +910,15 @@ with tab2:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 4. BOTÕES DE REGISTRO OFICIAL (FECHAMENTO DO MÊS E RFX)
+    # 5. BOTÕES DE REGISTRO OFICIAL (FECHAMENTO DO MÊS E RFX)
     # -------------------------------------------------------------
     st.subheader("📸 Registros Oficiais (Snapshot / Fechamento)")
     
     col_reg1, col_reg2 = st.columns(2)
     
-    # Opção A: Fechamento do Mês
     with col_reg1:
-        st.markdown("##### 1. Registrar Fechamento do Mês Vigente")
-        st.caption(f"Grava um screenshot/snapshot dos dados realizados e justificativas do mês de **{mes_vigente_sel}** para auditoria e histórico.")
+        st.markdown("##### 1. Registrar Fechamento Oficial do Mês")
+        st.caption(f"Grava um screenshot/snapshot permanente dos dados realizados e justificativas de **{mes_vigente_sel}** para consulta histórica na Aba 3.")
         if st.button(f"🔒 Gravar Fechamento Oficial de {mes_vigente_sel}", type="primary"):
             dados_fechamento = {
                 "mes": mes_vigente_sel,
@@ -898,14 +929,13 @@ with tab2:
                 "unitario_real": {k: float(v[mes_vigente_idx]) for k, v in unitario_real_rf.items()},
                 "montante_pb": {k: float(v[mes_vigente_idx]) for k, v in montante_pb.items()},
                 "montante_real": {k: float(v[mes_vigente_idx]) for k, v in montante_real_rf.items()},
-                "justificativas": st.session_state.justificativas.get(mes_vigente_sel, {})
+                "justificativas": st.session_state.justificativas.get(chave_just_mes, {})
             }
             st.session_state.fechamentos_mes[mes_vigente_sel] = dados_fechamento
             salvar_json(FILE_FECHAMENTOS_MES, st.session_state.fechamentos_mes)
-            st.success(f"✅ Fechamento de {mes_vigente_sel} registrado com sucesso! Consulte-o na Aba 3.")
+            st.success(f"✅ Fechamento de {mes_vigente_sel} gravado com sucesso! Consulte-o na Aba 3.")
             st.rerun()
 
-    # Opção B: Rolling Forecast (RFX)
     with col_reg2:
         st.markdown("##### 2. Congelar Relatório de Rolling Forecast (RFX)")
         sugestao_nome = f"RF{mes_vigente_idx + 1:02d}"
@@ -925,7 +955,9 @@ with tab2:
                     "unitario_real_rf": {k: list(v) for k, v in unitario_real_rf.items()},
                     "montante_pb": {k: list(v) for k, v in montante_pb.items()},
                     "montante_real_rf": {k: list(v) for k, v in montante_real_rf.items()},
-                    "justificativas": st.session_state.justificativas.get(mes_vigente_sel, {})
+                    "justificativas_mes": st.session_state.justificativas.get(chave_just_mes, {}),
+                    "justificativas_ytd": st.session_state.justificativas.get(chave_just_ytd, {}),
+                    "justificativas_fy": st.session_state.justificativas.get(chave_just_fy, {})
                 }
                 st.session_state.historico_rfx[nome_versao_rfx] = dados_congelados
                 salvar_json(FILE_HISTORICO_RFX, st.session_state.historico_rfx)
@@ -1025,7 +1057,6 @@ with tab3:
             dados_fech = st.session_state.fechamentos_mes[mes_fechado_sel]
             st.success(f"📌 **Fechamento Oficial: {mes_fechado_sel}** | Gravado em: **{dados_fech.get('data_fechamento', '-')}**")
 
-            # Indicadores do mês fechado
             f_u_pb = sum(dados_fech["montante_pb"].values()) / dados_fech["vol_pb"]
             f_u_real = sum(dados_fech["montante_real"].values()) / dados_fech["vol_real"]
             delta_f = f_u_real - f_u_pb
