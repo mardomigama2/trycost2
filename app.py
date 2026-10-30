@@ -150,9 +150,9 @@ with tab1:
         for i, col in enumerate(MESES):
             if col in styles.columns:
                 if i < mes_vigente_idx:
-                    styles[col] = "background-color: #E8F5E9;"  # Verde claro
+                    styles[col] = "background-color: #E8F5E9;"
                 elif i == mes_vigente_idx:
-                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
+                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"
         return styles
 
     def estilizar_tabela_volume(df):
@@ -658,7 +658,6 @@ with tab2:
     st.header("📝 Registro de Justificativas (Mês Vigente, YTD e Full Year)")
     st.caption("Insira as justificativas das variações para cada visão. Elas aparecem como plaquinhas sobre as barras no gráfico e ficam salvas permanentemente.")
 
-    # Cria estruturas para as 3 visões se não existirem
     chave_just_mes = f"Mês: {mes_vigente_sel}"
     chave_just_ytd = f"YTD (Jan-{mes_vigente_sel})"
     chave_just_fy = "Full Year (FY)"
@@ -674,7 +673,6 @@ with tab2:
             "🌐 Justificativas Full Year (FY)"
         ])
 
-        # Editor Mês Vigente
         with tab_j1:
             u_pb_m = [unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
             u_rf_m = [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
@@ -687,7 +685,6 @@ with tab2:
             })
             res_j_mes = st.data_editor(df_j_mes, disabled=["Fornecedor", "PB (R$/t)", "Real (R$/t)", "Desvio (R$/t)"], key="ed_j_mes", use_container_width=True)
 
-        # Editor YTD
         with tab_j2:
             v_pb_y = vol_pb_arr[:mes_vigente_idx + 1].sum()
             v_rf_y = vol_real_rf_arr[:mes_vigente_idx + 1].sum()
@@ -702,7 +699,6 @@ with tab2:
             })
             res_j_ytd = st.data_editor(df_j_ytd, disabled=["Fornecedor", "PB YTD (R$/t)", "Real YTD (R$/t)", "Desvio YTD (R$/t)"], key="ed_j_ytd", use_container_width=True)
 
-        # Editor FY
         with tab_j3:
             v_pb_f = sum_vol_pb
             v_rf_f = sum_vol_rf
@@ -767,7 +763,7 @@ with tab2:
             deltas_fornec.append(delta)
             measures.append("relative")
 
-        # Coluna final personalizada
+        # Coluna final personalizada com valor real correto (não 0,0)
         x_labels.append(label_final)
         y_vals.append(0)
         measures.append("total")
@@ -777,6 +773,9 @@ with tab2:
             if m == "relative":
                 sinal = "+" if v >= 0 else "-"
                 textos.append(f"{sinal} R$ {abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            elif m == "total":
+                # Exibe o valor do unitário real/final apurado com precisão
+                textos.append(f"R$ {u_rf_tot:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             else:
                 textos.append(f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
@@ -788,7 +787,7 @@ with tab2:
             textposition="outside",
             text=textos,
             y=y_vals,
-            connector={"line": {"color": "#444", "width": 1.5, "dash": "dot"}},
+            connector={"line": {"color": "#666", "width": 1.2, "dash": "dot"}},
             increasing={"marker": {"color": "#E53935"}},
             decreasing={"marker": {"color": "#43A047"}},
             totals={"marker": {"color": "#1E88E5"}}
@@ -796,33 +795,32 @@ with tab2:
 
         # Altura do suporte superior (bracket)
         max_base = max(u_pb_tot, u_rf_tot)
-        y_top_bracket = max_base * 1.22
-        y_teto_grafico = max_base * 1.42
+        y_top_bracket = max_base * 1.20
+        y_teto_grafico = max_base * 1.38
 
-        # 1. LINHA EM FORMATO DE SUPORTE SUPERIOR (BRACKET) LIGANDO PB A REAL
-        # Coordenadas: sobe de PB, vai até a última barra e desce até ela
+        # 1. LINHA EM FORMATO DE SUPORTE SUPERIOR MAIS FINA
         fig.add_shape(
             type="path",
             path=f"M 0,{u_pb_tot * 1.05} L 0,{y_top_bracket} L {len(x_labels)-1},{y_top_bracket} L {len(x_labels)-1},{u_rf_tot * 1.05}",
-            line=dict(color="#111111", width=3),
+            line=dict(color="#222222", width=1.5),
             layer="above"
         )
 
-        # 2. MEDALHA OVAL PRETA CENTRALIZADA COM A VARIAÇÃO TOTAL (ESTILO IMAGEM FP&A)
+        # 2. MEDALHA OVAL COM NÚMERO SEM NEGRITO E FONTE PADRÃO DA BRIDGE
         x_meio = (len(x_labels) - 1) / 2.0
         sinal_delta = "+" if delta_abs_total >= 0 else ""
-        texto_medalha = f"<b>{sinal_delta}{delta_abs_total:,.2f}</b> ({sinal_delta}{pct_delta_total:.1f}%)".replace(".", ",").replace("X", ".")
+        texto_medalha = f"{sinal_delta}{delta_abs_total:,.2f} ({sinal_delta}{pct_delta_total:.1f}%)".replace(".", ",").replace("X", ".")
 
         fig.add_annotation(
             x=x_meio,
             y=y_top_bracket,
             text=texto_medalha,
             showarrow=False,
-            font=dict(size=14, color="#000000", family="Arial Black, Arial"),
+            font=dict(size=12, color="#222222", family="Arial, sans-serif"),
             bgcolor="#FFFFFF",
-            bordercolor="#000000",
-            borderwidth=3.5,
-            borderpad=8,
+            bordercolor="#222222",
+            borderwidth=1.5,
+            borderpad=6,
             align="center",
             yshift=0
         )
@@ -850,18 +848,18 @@ with tab2:
                     font=dict(size=10, color="#1A237E"),
                     bgcolor=cor_badge,
                     bordercolor=cor_borda,
-                    borderwidth=1.2,
-                    borderpad=4,
-                    yshift=24
+                    borderwidth=1.0,
+                    borderpad=3,
+                    yshift=20
                 )
 
         fig.update_layout(
-            title=dict(text=f"<b>{titulo}</b>", x=0.5, xanchor="center", font=dict(size=18, color="#111")),
+            title=dict(text=f"<b>{titulo}</b>", x=0.5, xanchor="center", font=dict(size=17, color="#222")),
             yaxis_title="R$/t",
             waterfallgap=0.3,
-            height=530,
+            height=520,
             yaxis=dict(range=[0, y_teto_grafico]),
-            margin=dict(l=30, r=30, t=80, b=40)
+            margin=dict(l=30, r=30, t=75, b=40)
         )
         return fig
 
