@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import json
 import os
+import textwrap
 
 st.set_page_config(page_title="Gestão de Custo Variável - Imperatriz", layout="wide")
 
@@ -61,6 +62,12 @@ def fmt_pct_br(v):
     if pd.isna(v) or v is None:
         return ""
     return f"{v:.2f}%".replace(".", ",")
+
+def quebrar_texto_plaquinha(texto, largura=22):
+    if not texto:
+        return ""
+    linhas = textwrap.wrap(str(texto).strip(), width=largura)
+    return "<br>".join(linhas)
 
 # =========================================================
 # INICIALIZAÇÃO DE DADOS
@@ -150,9 +157,9 @@ with tab1:
         for i, col in enumerate(MESES):
             if col in styles.columns:
                 if i < mes_vigente_idx:
-                    styles[col] = "background-color: #E8F5E9;"
+                    styles[col] = "background-color: #E8F5E9;"  # Verde claro
                 elif i == mes_vigente_idx:
-                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"
+                    styles[col] = "background-color: #E3F2FD; border: 2px solid #2196F3;"  # Azul claro
         return styles
 
     def estilizar_tabela_volume(df):
@@ -653,38 +660,58 @@ with tab2:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 3. REGISTRO DE JUSTIFICATIVAS PARA TODAS AS VISÕES
+    # 3. REGISTRO DE JUSTIFICATIVAS COM CONTROLE DE POSIÇÃO
     # -------------------------------------------------------------
-    st.header("📝 Registro de Justificativas (Mês Vigente, YTD e Full Year)")
-    st.caption("Insira as justificativas das variações para cada visão. Elas aparecem como plaquinhas sobre as barras no gráfico e ficam salvas permanentemente.")
+    st.header("📝 Registro de Justificativas das Variações")
+    st.caption("Insira o motivo das variações. O texto cresce na vertical e você pode ajustar o deslocamento para evitar que uma placa cubra a outra.")
 
     chave_just_mes = f"Mês: {mes_vigente_sel}"
     chave_just_ytd = f"YTD (Jan-{mes_vigente_sel})"
     chave_just_fy = "Full Year (FY)"
 
+    # Inicialização da estrutura de justificativas (com texto, yshift e xshift)
     for c in [chave_just_mes, chave_just_ytd, chave_just_fy]:
         if c not in st.session_state.justificativas:
-            st.session_state.justificativas[c] = {f: "" for f in todos_fornecedores_ordenados}
+            st.session_state.justificativas[c] = {}
+        for f in todos_fornecedores_ordenados:
+            if f not in st.session_state.justificativas[c] or not isinstance(st.session_state.justificativas[c][f], dict):
+                # Se era texto antigo simples ou inexistente, converte para dict
+                antigo_txt = st.session_state.justificativas[c].get(f, "")
+                txt_limpo = antigo_txt if isinstance(antigo_txt, str) else ""
+                st.session_state.justificativas[c][f] = {"texto": txt_limpo, "yshift": 25, "xshift": 0}
 
-    with st.expander("✏️ Editar Justificativas das Variações por Visão", expanded=False):
+    with st.expander("✏️ Editar Justificativas e Ajustar Posição das Placas", expanded=False):
         tab_j1, tab_j2, tab_j3 = st.tabs([
-            f"📅 Justificativas do Mês ({mes_vigente_sel})",
-            f"📈 Justificativas YTD (Jan-{mes_vigente_sel})",
-            "🌐 Justificativas Full Year (FY)"
+            f"📅 Mês Vigente ({mes_vigente_sel})",
+            f"📈 YTD (Jan-{mes_vigente_sel})",
+            "🌐 Full Year (FY)"
         ])
 
+        # Editor Mês Vigente
         with tab_j1:
             u_pb_m = [unitario_pb.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
             u_rf_m = [unitario_real_rf.get(f, np.zeros(12))[mes_vigente_idx] for f in todos_fornecedores_ordenados]
             df_j_mes = pd.DataFrame({
                 "Fornecedor": todos_fornecedores_ordenados,
-                "PB (R$/t)": u_pb_m,
-                "Real (R$/t)": u_rf_m,
                 "Desvio (R$/t)": np.array(u_rf_m) - np.array(u_pb_m),
-                "Justificativa": [st.session_state.justificativas[chave_just_mes].get(f, "") for f in todos_fornecedores_ordenados]
+                "Justificativa": [st.session_state.justificativas[chave_just_mes][f]["texto"] for f in todos_fornecedores_ordenados],
+                "Subir/Descer (Y)": [int(st.session_state.justificativas[chave_just_mes][f].get("yshift", 25)) for f in todos_fornecedores_ordenados],
+                "Mover Lateral (X)": [int(st.session_state.justificativas[chave_just_mes][f].get("xshift", 0)) for f in todos_fornecedores_ordenados]
             })
-            res_j_mes = st.data_editor(df_j_mes, disabled=["Fornecedor", "PB (R$/t)", "Real (R$/t)", "Desvio (R$/t)"], key="ed_j_mes", use_container_width=True)
+            res_j_mes = st.data_editor(
+                df_j_mes,
+                disabled=["Fornecedor", "Desvio (R$/t)"],
+                column_config={
+                    "Desvio (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Justificativa": st.column_config.TextColumn("Justificativa", width="large"),
+                    "Subir/Descer (Y)": st.column_config.NumberColumn("Subir/Descer Y (px)", help="Aumente para subir a placa (ex: 45, 65) e evitar cobrir a placa vizinha", step=5),
+                    "Mover Lateral (X)": st.column_config.NumberColumn("Mover Lateral X (px)", help="Desloque para esquerda (-) ou direita (+) se necessário", step=5)
+                },
+                key="ed_j_mes",
+                use_container_width=True
+            )
 
+        # Editor YTD
         with tab_j2:
             v_pb_y = vol_pb_arr[:mes_vigente_idx + 1].sum()
             v_rf_y = vol_real_rf_arr[:mes_vigente_idx + 1].sum()
@@ -692,13 +719,25 @@ with tab2:
             u_rf_y = [montante_real_rf.get(f, np.zeros(12))[:mes_vigente_idx + 1].sum() / v_rf_y if v_rf_y > 0 else 0.0 for f in todos_fornecedores_ordenados]
             df_j_ytd = pd.DataFrame({
                 "Fornecedor": todos_fornecedores_ordenados,
-                "PB YTD (R$/t)": u_pb_y,
-                "Real YTD (R$/t)": u_rf_y,
                 "Desvio YTD (R$/t)": np.array(u_rf_y) - np.array(u_pb_y),
-                "Justificativa": [st.session_state.justificativas[chave_just_ytd].get(f, "") for f in todos_fornecedores_ordenados]
+                "Justificativa": [st.session_state.justificativas[chave_just_ytd][f]["texto"] for f in todos_fornecedores_ordenados],
+                "Subir/Descer (Y)": [int(st.session_state.justificativas[chave_just_ytd][f].get("yshift", 25)) for f in todos_fornecedores_ordenados],
+                "Mover Lateral (X)": [int(st.session_state.justificativas[chave_just_ytd][f].get("xshift", 0)) for f in todos_fornecedores_ordenados]
             })
-            res_j_ytd = st.data_editor(df_j_ytd, disabled=["Fornecedor", "PB YTD (R$/t)", "Real YTD (R$/t)", "Desvio YTD (R$/t)"], key="ed_j_ytd", use_container_width=True)
+            res_j_ytd = st.data_editor(
+                df_j_ytd,
+                disabled=["Fornecedor", "Desvio YTD (R$/t)"],
+                column_config={
+                    "Desvio YTD (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Justificativa": st.column_config.TextColumn("Justificativa", width="large"),
+                    "Subir/Descer (Y)": st.column_config.NumberColumn("Subir/Descer Y (px)", step=5),
+                    "Mover Lateral (X)": st.column_config.NumberColumn("Mover Lateral X (px)", step=5)
+                },
+                key="ed_j_ytd",
+                use_container_width=True
+            )
 
+        # Editor FY
         with tab_j3:
             v_pb_f = sum_vol_pb
             v_rf_f = sum_vol_rf
@@ -706,28 +745,51 @@ with tab2:
             u_rf_f = [sum(montante_real_rf.get(f, np.zeros(12))) / v_rf_f if v_rf_f > 0 else 0.0 for f in todos_fornecedores_ordenados]
             df_j_fy = pd.DataFrame({
                 "Fornecedor": todos_fornecedores_ordenados,
-                "PB FY (R$/t)": u_pb_f,
-                "Real+RF FY (R$/t)": u_rf_f,
                 "Desvio FY (R$/t)": np.array(u_rf_f) - np.array(u_pb_f),
-                "Justificativa": [st.session_state.justificativas[chave_just_fy].get(f, "") for f in todos_fornecedores_ordenados]
+                "Justificativa": [st.session_state.justificativas[chave_just_fy][f]["texto"] for f in todos_fornecedores_ordenados],
+                "Subir/Descer (Y)": [int(st.session_state.justificativas[chave_just_fy][f].get("yshift", 25)) for f in todos_fornecedores_ordenados],
+                "Mover Lateral (X)": [int(st.session_state.justificativas[chave_just_fy][f].get("xshift", 0)) for f in todos_fornecedores_ordenados]
             })
-            res_j_fy = st.data_editor(df_j_fy, disabled=["Fornecedor", "PB FY (R$/t)", "Real+RF FY (R$/t)", "Desvio FY (R$/t)"], key="ed_j_fy", use_container_width=True)
+            res_j_fy = st.data_editor(
+                df_j_fy,
+                disabled=["Fornecedor", "Desvio FY (R$/t)"],
+                column_config={
+                    "Desvio FY (R$/t)": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Justificativa": st.column_config.TextColumn("Justificativa", width="large"),
+                    "Subir/Descer (Y)": st.column_config.NumberColumn("Subir/Descer Y (px)", step=5),
+                    "Mover Lateral (X)": st.column_config.NumberColumn("Mover Lateral X (px)", step=5)
+                },
+                key="ed_j_fy",
+                use_container_width=True
+            )
 
-        if st.button("💾 Salvar Todas as Justificativas", type="primary"):
+        if st.button("💾 Salvar Todas as Justificativas e Posições", type="primary"):
             for _, r in res_j_mes.iterrows():
-                st.session_state.justificativas[chave_just_mes][r["Fornecedor"]] = str(r["Justificativa"]).strip()
+                st.session_state.justificativas[chave_just_mes][r["Fornecedor"]] = {
+                    "texto": str(r["Justificativa"]).strip(),
+                    "yshift": int(r["Subir/Descer (Y)"]),
+                    "xshift": int(r["Mover Lateral (X)"])
+                }
             for _, r in res_j_ytd.iterrows():
-                st.session_state.justificativas[chave_just_ytd][r["Fornecedor"]] = str(r["Justificativa"]).strip()
+                st.session_state.justificativas[chave_just_ytd][r["Fornecedor"]] = {
+                    "texto": str(r["Justificativa"]).strip(),
+                    "yshift": int(r["Subir/Descer (Y)"]),
+                    "xshift": int(r["Mover Lateral (X)"])
+                }
             for _, r in res_j_fy.iterrows():
-                st.session_state.justificativas[chave_just_fy][r["Fornecedor"]] = str(r["Justificativa"]).strip()
+                st.session_state.justificativas[chave_just_fy][r["Fornecedor"]] = {
+                    "texto": str(r["Justificativa"]).strip(),
+                    "yshift": int(r["Subir/Descer (Y)"]),
+                    "xshift": int(r["Mover Lateral (X)"])
+                }
             salvar_json(FILE_JUSTIFICATIVAS, st.session_state.justificativas)
-            st.success("Justificativas das 3 visões salvas com sucesso!")
+            st.success("Justificativas e posições salvas com sucesso!")
             st.rerun()
 
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 4. BRIDGES WATERFALL COM DESIGN DA IMAGEM E PLACAS
+    # 4. BRIDGES WATERFALL
     # -------------------------------------------------------------
     st.header("🌉 Bridges de Impacto no Custo Unitário (R$/t)")
 
@@ -744,7 +806,6 @@ with tab2:
         delta_abs_total = u_rf_tot - u_pb_tot
         pct_delta_total = ((u_rf_tot / u_pb_tot) - 1) * 100 if u_pb_tot > 0 else 0.0
 
-        # Primeira coluna: SEMPRE "PB"
         x_labels = ["PB"]
         y_vals = [u_pb_tot]
         measures = ["absolute"]
@@ -763,7 +824,6 @@ with tab2:
             deltas_fornec.append(delta)
             measures.append("relative")
 
-        # Coluna final personalizada com valor real correto (não 0,0)
         x_labels.append(label_final)
         y_vals.append(0)
         measures.append("total")
@@ -774,7 +834,6 @@ with tab2:
                 sinal = "+" if v >= 0 else "-"
                 textos.append(f"{sinal} R$ {abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             elif m == "total":
-                # Exibe o valor do unitário real/final apurado com precisão
                 textos.append(f"R$ {u_rf_tot:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             else:
                 textos.append(f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -793,20 +852,19 @@ with tab2:
             totals={"marker": {"color": "#1E88E5"}}
         ))
 
-        # Altura do suporte superior (bracket)
         max_base = max(u_pb_tot, u_rf_tot)
-        y_top_bracket = max_base * 1.20
-        y_teto_grafico = max_base * 1.38
+        y_top_bracket = max_base * 1.25
+        y_teto_grafico = max_base * 1.45
 
-        # 1. LINHA EM FORMATO DE SUPORTE SUPERIOR MAIS FINA
+        # 1. LINHA EM SUPORTE RETANGULAR FINO
         fig.add_shape(
             type="path",
             path=f"M 0,{u_pb_tot * 1.05} L 0,{y_top_bracket} L {len(x_labels)-1},{y_top_bracket} L {len(x_labels)-1},{u_rf_tot * 1.05}",
-            line=dict(color="#222222", width=1.5),
+            line=dict(color="#222222", width=1.3),
             layer="above"
         )
 
-        # 2. MEDALHA OVAL COM NÚMERO SEM NEGRITO E FONTE PADRÃO DA BRIDGE
+        # 2. MEDALHA OVAL COM TIPOGRAFIA PADRÃO
         x_meio = (len(x_labels) - 1) / 2.0
         sinal_delta = "+" if delta_abs_total >= 0 else ""
         texto_medalha = f"{sinal_delta}{delta_abs_total:,.2f} ({sinal_delta}{pct_delta_total:.1f}%)".replace(".", ",").replace("X", ".")
@@ -825,7 +883,7 @@ with tab2:
             yshift=0
         )
 
-        # 3. PLAQUINHAS COM JUSTIFICATIVAS SOBRE AS BARRAS DE CADA FORNECEDOR
+        # 3. PLAQUINHAS COM FUNDO BRANCO, QUEBRA VERTICAL E AJUSTE DE POSIÇÃO
         just_map = st.session_state.justificativas.get(chave_just_atual, {})
         acumulado = u_pb_tot
         
@@ -834,30 +892,38 @@ with tab2:
             acumulado_anterior = acumulado
             acumulado += delta_val
             
-            texto_just = just_map.get(f, "").strip()
-            if texto_just and abs(delta_val) > 0.001:
+            dado_f = just_map.get(f, {})
+            texto_raw = dado_f.get("texto", "") if isinstance(dado_f, dict) else str(dado_f)
+            yshift_custom = int(dado_f.get("yshift", 25)) if isinstance(dado_f, dict) else 25
+            xshift_custom = int(dado_f.get("xshift", 0)) if isinstance(dado_f, dict) else 0
+
+            texto_limpo = texto_raw.strip()
+            if texto_limpo and abs(delta_val) > 0.001:
                 y_pos_barra = max(acumulado_anterior, acumulado)
-                cor_badge = "#FFEBEE" if delta_val > 0 else "#E8F5E9"
                 cor_borda = "#D32F2F" if delta_val > 0 else "#2E7D32"
+                cor_texto = "#B71C1C" if delta_val > 0 else "#1B5E20"
+                texto_formatado = quebrar_texto_plaquinha(texto_limpo, largura=22)
                 
                 fig.add_annotation(
                     x=f,
                     y=y_pos_barra,
-                    text=f"💬 <i>{texto_just}</i>",
+                    text=f"💬 <i>{texto_formatado}</i>",
                     showarrow=False,
-                    font=dict(size=10, color="#1A237E"),
-                    bgcolor=cor_badge,
+                    font=dict(size=9.5, color=cor_texto, family="Arial, sans-serif"),
+                    bgcolor="#FFFFFF",  # Fundo 100% Branco
                     bordercolor=cor_borda,
-                    borderwidth=1.0,
-                    borderpad=3,
-                    yshift=20
+                    borderwidth=1.2,
+                    borderpad=5,
+                    yshift=yshift_custom,
+                    xshift=xshift_custom,
+                    align="center"
                 )
 
         fig.update_layout(
             title=dict(text=f"<b>{titulo}</b>", x=0.5, xanchor="center", font=dict(size=17, color="#222")),
             yaxis_title="R$/t",
             waterfallgap=0.3,
-            height=520,
+            height=540,
             yaxis=dict(range=[0, y_teto_grafico]),
             margin=dict(l=30, r=30, t=75, b=40)
         )
@@ -1074,12 +1140,14 @@ with tab3:
             for f in dados_fech["unitario_pb"].keys():
                 u_p = dados_fech["unitario_pb"][f]
                 u_r = dados_fech["unitario_real"][f]
+                dado_j = justs_fech.get(f, {})
+                txt_just = dado_j.get("texto", "") if isinstance(dado_j, dict) else str(dado_j)
                 linhas_fech.append({
                     "Fornecedor": f,
                     "PB (R$/t)": u_p,
                     "Real (R$/t)": u_r,
                     "Desvio (R$/t)": u_r - u_p,
-                    "Justificativa Registrada": justs_fech.get(f, "Sem justificativa")
+                    "Justificativa Registrada": txt_just if txt_just else "Sem justificativa"
                 })
             
             df_fech_tabela = pd.DataFrame(linhas_fech)
