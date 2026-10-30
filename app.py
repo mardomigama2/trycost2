@@ -128,7 +128,6 @@ with tab1:
         )
     mes_vigente_idx = MESES.index(mes_vigente_sel)
 
-    # Estilização Periódica Padrão
     def estilizar_colunas_periodo_padrao(df):
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
         for i, col in enumerate(MESES):
@@ -323,7 +322,7 @@ with tab1:
     # 4. SIMULADOR RF
     # -------------------------------------------------------------
     st.header("4. Simulador RF")
-    st.caption("ℹ️ Defina o novo valor base e o mês em que ele entra em vigor. No mês de início, o valor assume exatamente o Valor Base (sem multiplicar por custos). Os reajustes paramétricos incidem nos meses seguintes.")
+    st.caption("ℹ️ Defina o novo valor base e o mês em que ele entra em vigor. No mês de início, o valor assume exatamente o Valor Base. Os reajustes paramétricos incidem nos meses seguintes.")
     
     if "Mes_Inicio" not in st.session_state.fornecedores.columns:
         st.session_state.fornecedores["Mes_Inicio"] = 1
@@ -348,8 +347,7 @@ with tab1:
         st.session_state.fornecedores = edit_fornec
         salvar_json(FILE_FORNECEDORES, edit_fornec.to_dict(orient="records"))
         
-        # Sincroniza a memória de Real+RF: quando o usuário salva o Simulador,
-        # limpamos as travas manuais futuras para que a nova simulação apareça imediatamente na Aba 2!
+        # Limpa travas manuais futuras para sincronizar a projeção
         st.session_state.matriz_real_rf_custom = {}
         salvar_json(FILE_CUSTOM_RF, {})
         
@@ -385,9 +383,10 @@ for f_nome, vals_pb in st.session_state.pb_fornecedores.items():
         montante_pb[f_nome_str] = vals_arr
         unitario_pb[f_nome_str] = np.where(vol_pb_arr > 0, vals_arr / vol_pb_arr, 0.0)
 
-# 2. PROJEÇÃO REAL+RF BASE DO SIMULADOR RF
-proj_tarifa_rf = {}
-proj_fixo_rf = {}
+# 2. MOTOR DINÂMICO DE REAL+RF COM ENCATENAMENTO DE INTERVALO
+# Se o mês vigente foi ajustado na Aba 2, ele serve como âncora para os meses seguintes até o simulador!
+montante_real_rf = {}
+unitario_real_rf = {}
 
 for _, row in st.session_state.fornecedores.iterrows():
     nome = str(row.get("Fornecedor", "")).strip()
@@ -395,11 +394,11 @@ for _, row in st.session_state.fornecedores.iterrows():
         continue
         
     tipo = str(row.get("Tipo", "Tarifa (R$/t)"))
-    base = float(row.get("Valor_Base", 0.0))
+    base_simulador = float(row.get("Valor_Base", 0.0))
     gatilho = str(row.get("Gatilho_Mensal", "Nenhum"))
     
     mes_inicio_raw = row.get("Mes_Inicio", 1)
-    m_inicio = (int(mes_inicio_raw) - 1) if pd.notna(mes_inicio_raw) and mes_inicio_raw > 0 else 0
+    m_inicio_sim = (int(mes_inicio_raw) - 1) if pd.notna(mes_inicio_raw) and mes_inicio_raw > 0 else 0
 
     mes_aniv_raw = row.get("Mes_Aniv")
     m_aniv = (int(mes_aniv_raw) - 1) if pd.notna(mes_aniv_raw) and mes_aniv_raw > 0 else 99
@@ -413,53 +412,83 @@ for _, row in st.session_state.fornecedores.iterrows():
     elif idx_aniv == "IGPM":
         taxa_aniv = np.sum(igpm_taxa)
 
-    hist_pb_forn = st.session_state.pb_fornecedores.get(nome, [base] * 12)
+    hist_pb_forn = st.session_state.pb_fornecedores.get(nome, [base_simulador] * 12)
+    custom_vals = st.session_state.matriz_real_rf_custom.get(nome, None)
+
     curva_u = np.zeros(12)
     curva_m = np.zeros(12)
 
-    # 1. Meses anteriores a m_inicio: preservam o PB sem zerar
-    for m in range(m_inicio):
-        if nome in st.session_state.pb_fornecedores:
+    # Passo A: Meses Passados (< mes_vigente_idx)
+    for m in range(mes_vigente_idx):
+        if custom_vals is not None and pd.notna(custom_vals[m]) and float(custom_vals[m]) > 0:
+            val_p = float(custom_vals[m])
+        elif nome in st.session_state.pb_fornecedores:
             val_p = float(hist_pb_forn[m])
-            if "Tarifa" in tipo:
-                curva_u[m] = val_p
-                curva_m[m] = val_p * vol_real_rf_arr[m]
-            else:
-                curva_m[m] = val_p
-                curva_u[m] = val_p / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
         else:
-            curva_u[m] = 0.0
-            curva_m[m] = 0.0
+            val_p = base_simulador if m >= m_inicio_sim else 0.0
 
-    # 2. No mês m_inicio: assume EXATAMENTE o Valor Base (sem multiplicar por custos)
-    if m_inicio < 12:
         if "Tarifa" in tipo:
-            curva_u[m_inicio] = base
-            curva_m[m_inicio] = base * vol_real_rf_arr[m_inicio]
+            curva_u[m] = val_p
+            curva_m[m] = val_p * vol_real_rf_arr[m]
         else:
-            curva_m[m_inicio] = base
-            curva_u[m_inicio] = base / vol_real_rf_arr[m_inicio] if vol_real_rf_arr[m_inicio] > 0 else 0.0
+            curva_m[m] = val_p
+            curva_u[m] = val_p / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
 
-    # 3. Meses seguintes (m > m_inicio): incidem os reajustes paramétricos encadeados
-    for m in range(m_inicio + 1, 12):
-        var_mensal = (1.0 + diesel_taxa[m]) if gatilho == "Diesel" else 1.0
-        var_aniv = (1.0 + taxa_aniv) if m == m_aniv else 1.0
-        
-        if "Tarifa" in tipo:
-            tarifa_ant = curva_u[m - 1] if curva_u[m - 1] > 0 else base
-            tarifa_m = tarifa_ant * var_mensal * var_aniv
-            curva_u[m] = tarifa_m
-            curva_m[m] = tarifa_m * vol_real_rf_arr[m]
-        else:
-            custo_ant = curva_m[m - 1] if curva_m[m - 1] > 0 else base
-            custo_m = custo_ant * var_aniv
-            curva_m[m] = custo_m
-            curva_u[m] = custo_m / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+    # Passo B: Mês Vigente (mes_vigente_idx) -> ÂNCORA
+    if custom_vals is not None and pd.notna(custom_vals[mes_vigente_idx]) and float(custom_vals[mes_vigente_idx]) > 0:
+        val_vigente = float(custom_vals[mes_vigente_idx])
+    else:
+        # Se m_inicio_sim já ocorreu ou ocorre agora, pega base_simulador; senão histórico do PB
+        val_vigente = base_simulador if mes_vigente_idx >= m_inicio_sim else float(hist_pb_forn[mes_vigente_idx])
 
     if "Tarifa" in tipo:
-        proj_tarifa_rf[nome] = curva_u
+        curva_u[mes_vigente_idx] = val_vigente
+        curva_m[mes_vigente_idx] = val_vigente * vol_real_rf_arr[mes_vigente_idx]
     else:
-        proj_fixo_rf[nome] = curva_m
+        curva_m[mes_vigente_idx] = val_vigente
+        curva_u[mes_vigente_idx] = val_vigente / vol_real_rf_arr[mes_vigente_idx] if vol_real_rf_arr[mes_vigente_idx] > 0 else 0.0
+
+    # Passo C: Meses Futuros (> mes_vigente_idx)
+    # Se m < m_inicio_sim: evolui a partir da âncora do mês vigente aplicando diesel/inflação!
+    # Se m >= m_inicio_sim: aplica a nova regra do Simulador RF!
+    for m in range(mes_vigente_idx + 1, 12):
+        # Se o usuário ajustou um valor manual específico na Aba 2 para este mês, respeita
+        if custom_vals is not None and pd.notna(custom_vals[m]) and float(custom_vals[m]) > 0:
+            val_m = float(custom_vals[m])
+            if "Tarifa" in tipo:
+                curva_u[m] = val_m
+                curva_m[m] = val_m * vol_real_rf_arr[m]
+            else:
+                curva_m[m] = val_m
+                curva_u[m] = val_m / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+            continue
+
+        var_mensal = (1.0 + diesel_taxa[m]) if gatilho == "Diesel" else 1.0
+        var_aniv = (1.0 + taxa_aniv) if m == m_aniv else 1.0
+
+        if m == m_inicio_sim and m_inicio_sim > mes_vigente_idx:
+            # Ponto de corte do Simulador RF: assume a nova base do simulador
+            if "Tarifa" in tipo:
+                curva_u[m] = base_simulador
+                curva_m[m] = base_simulador * vol_real_rf_arr[m]
+            else:
+                curva_m[m] = base_simulador
+                curva_u[m] = base_simulador / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+        else:
+            # Encadeia a partir do mês anterior (m-1)
+            if "Tarifa" in tipo:
+                tarifa_ant = curva_u[m - 1]
+                tarifa_m = tarifa_ant * var_mensal * var_aniv
+                curva_u[m] = tarifa_m
+                curva_m[m] = tarifa_m * vol_real_rf_arr[m]
+            else:
+                custo_ant = curva_m[m - 1]
+                custo_m = custo_ant * var_aniv
+                curva_m[m] = custo_m
+                curva_u[m] = custo_m / vol_real_rf_arr[m] if vol_real_rf_arr[m] > 0 else 0.0
+
+    unitario_real_rf[nome] = curva_u
+    montante_real_rf[nome] = curva_m
 
 
 # =========================================================
@@ -481,19 +510,15 @@ with tab2:
     # -------------------------------------------------------------
     # EDITOR CUSTOMIZADO DE REAL+RF (TARIFA vs FIXO)
     # -------------------------------------------------------------
-    with st.expander("✏️ Ajustar Manualmente Valores de Real+RF (Opcional - Fechamentos)", expanded=False):
-        st.write("Ajuste os valores reais já apurados ou projeções pontuais. Os valores padrão vêm calculados automaticamente do **Simulador RF**.")
+    with st.expander("✏️ Ajustar Valores de Real+RF (Tarifas em R$/t e Fixos em R$)", expanded=False):
+        st.write("Ajuste os valores reais apurados ou o fechamento do mês vigente. Os meses seguintes até o próximo reajuste do Simulador RF serão ajustados automaticamente com base no valor vigente.")
         
         st.markdown("##### 1. Fornecedores Tarifários (Editar Tarifa em R$/t)")
         lista_tarifarios = [f for f in st.session_state.fornecedores["Fornecedor"].dropna().unique() if "Tarifa" in tipo_fornec_map.get(f, "")]
         if lista_tarifarios:
             df_tar_edit = pd.DataFrame(index=lista_tarifarios, columns=MESES)
             for f in lista_tarifarios:
-                if f in st.session_state.matriz_real_rf_custom:
-                    df_tar_edit.loc[f] = st.session_state.matriz_real_rf_custom[f]
-                else:
-                    df_tar_edit.loc[f] = proj_tarifa_rf.get(f, [0.0] * 12)
-            
+                df_tar_edit.loc[f] = unitario_real_rf.get(f, [0.0] * 12)
             res_tar = st.data_editor(df_tar_edit.astype(float), use_container_width=True, key="editor_tar_rf")
         else:
             res_tar = pd.DataFrame()
@@ -503,56 +528,27 @@ with tab2:
         if lista_fixos:
             df_fix_edit = pd.DataFrame(index=lista_fixos, columns=MESES)
             for f in lista_fixos:
-                if f in st.session_state.matriz_real_rf_custom:
-                    df_fix_edit.loc[f] = st.session_state.matriz_real_rf_custom[f]
-                else:
-                    df_fix_edit.loc[f] = proj_fixo_rf.get(f, [0.0] * 12)
-            
+                df_fix_edit.loc[f] = montante_real_rf.get(f, [0.0] * 12)
             res_fix = st.data_editor(df_fix_edit.astype(float), use_container_width=True, key="editor_fix_rf")
         else:
             res_fix = pd.DataFrame()
 
         col_s_rf1, col_s_rf2 = st.columns([2, 3])
         with col_s_rf1:
-            if st.button("💾 Salvar Ajustes Manuais de Real+RF", type="primary"):
+            if st.button("💾 Salvar Ajuste e Recalcular Intervalo", type="primary"):
                 for f in res_tar.index:
                     st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_tar.loc[f].values]
                 for f in res_fix.index:
                     st.session_state.matriz_real_rf_custom[f] = [float(x) for x in res_fix.loc[f].values]
                 salvar_json(FILE_CUSTOM_RF, st.session_state.matriz_real_rf_custom)
-                st.success("Ajustes manuais salvos com sucesso!")
+                st.success("Ajustes salvos! Projeção encadeada recalculada.")
                 st.rerun()
         with col_s_rf2:
             if st.button("🔄 Redefinir Tudo com Base no Simulador RF"):
                 st.session_state.matriz_real_rf_custom = {}
                 salvar_json(FILE_CUSTOM_RF, {})
-                st.info("Valores manuais limpos. Tabelas sincronizadas diretamente com o Simulador RF!")
+                st.info("Ajustes manuais limpos. Tabelas sincronizadas diretamente com o Simulador RF!")
                 st.rerun()
-
-    # Consolidação Final de Real+RF
-    montante_real_rf = {}
-    unitario_real_rf = {}
-
-    for _, row in st.session_state.fornecedores.iterrows():
-        f = str(row.get("Fornecedor", "")).strip()
-        if not f:
-            continue
-        tipo = str(row.get("Tipo", "Tarifa (R$/t)"))
-        
-        if "Tarifa" in tipo:
-            if f in st.session_state.matriz_real_rf_custom:
-                tarifa_vals = np.array(st.session_state.matriz_real_rf_custom[f], dtype=float)
-            else:
-                tarifa_vals = np.array(proj_tarifa_rf.get(f, [0.0] * 12), dtype=float)
-            unitario_real_rf[f] = tarifa_vals
-            montante_real_rf[f] = tarifa_vals * vol_real_rf_arr
-        else:
-            if f in st.session_state.matriz_real_rf_custom:
-                fixo_vals = np.array(st.session_state.matriz_real_rf_custom[f], dtype=float)
-            else:
-                fixo_vals = np.array(proj_fixo_rf.get(f, [0.0] * 12), dtype=float)
-            montante_real_rf[f] = fixo_vals
-            unitario_real_rf[f] = np.where(vol_real_rf_arr > 0, fixo_vals / vol_real_rf_arr, 0.0)
 
     # Totais consolidados
     total_m_pb = sum(montante_pb.values())
