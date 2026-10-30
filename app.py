@@ -70,7 +70,6 @@ default_fornec = [
 ]
 default_vol_pb = [151923, 122844, 88439, 136974, 136854, 118845, 138754, 146088, 139023, 147327, 139805, 142788]
 
-# Valores mensais do PB com as regras definidas
 default_pb_fornecedores = {
     "VLI": [117.48, 116.60, 119.75, 121.42, 122.14, 119.62, 117.15, 114.04, 116.55, 117.26, 118.72, 115.31],
     "FTL": [17.77, 18.61, 19.23, 18.68, 18.09, 17.52, 17.18, 17.22, 17.10, 16.74, 16.93, 16.32],
@@ -217,35 +216,33 @@ with tab1:
     st.markdown("---")
     
     # -------------------------------------------------------------
-    # 2. TABELA ÚNICA MENSALIZADA DO PB DOS FORNECEDORES (TRAVADA)
+    # 2. TABELA ÚNICA MENSALIZADA DO PB DOS FORNECEDORES
     # -------------------------------------------------------------
     st.header("2. Valores Mensais do PB dos Fornecedores (Plano Básico)")
     st.caption("🔒 *Tabela travada com os valores orçados mensais de cada fornecedor. Tarifas expressas em R$/t e Custos Fixos em R$ mensal.*")
 
-    # Garante que todos os fornecedores cadastrados tenham linha no PB
     for _, f_row in st.session_state.fornecedores.iterrows():
         f_nome = str(f_row["Fornecedor"]).strip()
         if f_nome and f_nome not in st.session_state.pb_fornecedores:
             st.session_state.pb_fornecedores[f_nome] = [float(f_row.get("Valor_Base", 0.0))] * 12
 
-    # Montagem do DataFrame de Exibição do PB
     df_pb_fornec_exib = pd.DataFrame.from_dict(
         st.session_state.pb_fornecedores,
         orient="index",
         columns=MESES
     )
 
-    # Identificação do tipo para formatação correta (R$/t ou R$)
     tipo_fornec_map = {}
     for _, f_row in st.session_state.fornecedores.iterrows():
         tipo_fornec_map[str(f_row["Fornecedor"]).strip()] = str(f_row.get("Tipo", "Tarifa (R$/t)"))
 
+    # Função com conversão segura para evitar o LossySetitemError
     def formatar_tabela_pb_fornec(df):
-        formatted_df = df.copy()
-        for r in formatted_df.index:
+        formatted_df = pd.DataFrame(index=df.index, columns=df.columns, dtype=object)
+        for r in df.index:
             t = tipo_fornec_map.get(r, "Tarifa (R$/t)")
-            for c in formatted_df.columns:
-                val = formatted_df.loc[r, c]
+            for c in df.columns:
+                val = df.loc[r, c]
                 if "Tarifa" in t:
                     formatted_df.loc[r, c] = fmt_unit_br(val)
                 else:
@@ -404,7 +401,6 @@ for _, row in st.session_state.fornecedores.iterrows():
     elif idx_aniv == "IGPM":
         taxa_aniv = np.sum(igpm_taxa)
 
-    # 1. PB Base: Puxa diretamente da matriz mensal travada do PB dos fornecedores
     valores_pb_fornec = st.session_state.pb_fornecedores.get(nome, [base] * 12)
     m_pb = np.zeros(12)
     u_pb = np.zeros(12)
@@ -422,7 +418,6 @@ for _, row in st.session_state.fornecedores.iterrows():
     montante_pb[nome] = m_pb
     unitario_pb[nome] = u_pb
 
-    # 2. Real+RF Encadeado:
     m_calc = np.zeros(12)
     u_calc = np.zeros(12)
     
